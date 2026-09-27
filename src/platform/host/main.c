@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 
+int cgjre_host_inspect(const char *path);
+
 static void show_smoke(void *context)
 {
     (void)context;
@@ -20,6 +22,8 @@ int main(int argc, char **argv)
     const cgjre_platform platform = {show_smoke, wait_for_exit, NULL};
     if(argc == 2 && strcmp(argv[1], "--smoke") == 0)
         return cgjre_smoke_run(&platform);
-    fprintf(stderr, "Usage: %s --smoke\nJAR execution is not implemented in M0.\n", argv[0]);
+    if(argc == 3 && strcmp(argv[1], "--inspect") == 0)
+        return cgjre_host_inspect(argv[2]);
+    fprintf(stderr, "Usage: %s --smoke | --inspect JAR\nJAR execution is not implemented.\n", argv[0]);
     return 2;
 }

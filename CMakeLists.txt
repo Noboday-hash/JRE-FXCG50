@@ -6,6 +6,8 @@ option(CGJRE_HOST "Build portable host harness" OFF)
 
 set(CGJRE_PORTABLE_SOURCES
   src/smoke.c
+  src/archive/zip.c
+  src/archive/manifest.c
 )
 
 if(CGJRE_HOST)
@@ -13,11 +15,15 @@ if(CGJRE_HOST)
   add_executable(cgjre-host
     ${CGJRE_PORTABLE_SOURCES}
     src/platform/host/main.c
+    src/platform/host/inspect.c
   )
   target_include_directories(cgjre-host PRIVATE include)
   target_compile_options(cgjre-host PRIVATE -Wall -Wextra -Werror)
   if(BUILD_TESTING)
     add_test(NAME smoke COMMAND cgjre-host --smoke)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME archive COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_archive.py $<TARGET_FILE:cgjre-host>)
   endif()
 else()
   include(GenerateG3A)
