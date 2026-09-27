@@ -8,6 +8,7 @@ set(CGJRE_PORTABLE_SOURCES
   src/smoke.c
   src/archive/zip.c
   src/archive/manifest.c
+  src/archive/suite.c
   src/vm/classfile.c
   src/vm/bytecode_scan.c
   src/vm/interpreter.c
@@ -37,6 +38,8 @@ if(CGJRE_HOST)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_classfile.py $<TARGET_FILE:cgjre-host>)
     add_test(NAME vm_int COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm_int.py $<TARGET_FILE:cgjre-host>)
+    add_test(NAME vm_jar COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm_jar.py $<TARGET_FILE:cgjre-host>)
   endif()
 else()
   include(GenerateG3A)

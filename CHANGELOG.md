@@ -6,6 +6,7 @@
 - Added 256 opcode coverage rows, integer semantic fixtures, and verification of a real ECJ 45.3 class file.
 - Added bounded same-class static calls with nested frames and return propagation.
 - Accepted class format 46.0 after old-phone JAR inspection and fixtures.
+- Added an owned JAR class cache and cross-class static integer calls through a resolver callback.
 
 ## Unreleased — M1 in progress
 

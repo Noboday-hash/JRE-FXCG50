@@ -4,11 +4,11 @@ Risk summary: DEFLATE extraction on diverse JARs, class-file parsing beyond cont
 
 ## Current milestone
 
-M1 now parses format 45.3 and 46.0 classes, including both local old-phone MIDlet JARs in static inspection. M2 executes static integer methods and bounded same-class `invokestatic` calls through explicit frames; cross-class calls, objects, and MIDlet launch are pending. Farm Frenzy 2 is the first compatibility target by user choice. Calculator source still launches only the smoke screen.
+M1 parses format 45.3 and 46.0 classes, including both local old-phone MIDlet JARs in static inspection. M2 now loads classes from an external JAR and executes bounded static integer calls across those classes through explicit frames. Objects, arrays, and MIDlet launch are pending. Farm Frenzy 2 is the first compatibility target by user choice. Calculator source still launches only the smoke screen.
 
 ## Coverage
 
-`docs/opcodes.csv` lists all 256 opcode bytes: 54 `m2_integer_slice`, three `partial_integer_only`, and one `partial_same_class_integer` (`invokestatic`); the rest are not implemented or rejected. These slice entries have host fixtures under the restrictions in `docs/architecture.md`; this is not complete baseline support. No Java class-library API is implemented. `docs/api-matrix.csv` now lists exact planned RMS and silent media descriptors referenced by Farm Frenzy 2. The parser accepts exact class versions 45.3 and 46.0. CLDC `StackMap` is bounded and skipped; there is no full verifier or Java exception delivery.
+`docs/opcodes.csv` lists all 256 opcode bytes: 54 `m2_integer_slice`, three `partial_integer_only`, and one `partial_static_integer` (`invokestatic`); the rest are not implemented or rejected. These slice entries have host fixtures under the restrictions in `docs/architecture.md`; this is not complete baseline support. No Java class-library API is implemented. `docs/api-matrix.csv` lists exact planned RMS and silent media descriptors referenced by Farm Frenzy 2. The parser accepts exact class versions 45.3 and 46.0. CLDC `StackMap` is bounded and skipped; there is no full verifier or Java exception delivery.
 
 ## Toolchain and dependencies
 
@@ -16,11 +16,11 @@ See `docs/toolchain.md`, `docs/decisions.md`, and `THIRD_PARTY_NOTICES.md`. The 
 
 ## Last checks
 
-PASS: `cmake -S . -B build-host -DCGJRE_HOST=ON -DCMAKE_BUILD_TYPE=Debug`; `cmake --build build-host --parallel`; `ctest --test-dir build-host --output-on-failure` (4/4: smoke, archive, classfile, vm_int). PASS: `python3 tools/inspect_jar.py` on both local game JARs; this is static parsing only. PASS: ECJ 3.26.0 compiled `build-host/deps/Arithmetic.java` with `-source 1.3 -target 1.1`; `javap -verbose` showed 45.3, and `./build-host/cgjre-host --eval-class build-host/deps/classes/Arithmetic.class test '(I)I' 41` returned `result=42 steps=7` with a real static call.
+PASS: `cmake -S . -B build-host -DCGJRE_HOST=ON -DCMAKE_BUILD_TYPE=Debug`; `cmake --build build-host --parallel`; `ctest --test-dir build-host --output-on-failure` (5/5: smoke, archive, classfile, vm_int, vm_jar). PASS: `python3 tools/inspect_jar.py` on both local game JARs; this is static parsing only. PASS: ECJ 3.26.0 compiled `build-host/deps/Caller.java` and `Helper.java` with `-source 1.3 -target 1.1`; `./build-host/cgjre-host --eval-jar build-host/deps/TwoClass.jar Caller test '(I)I' 41` returned `result=42 steps=7`.
 
-PASS: `fxsdk build-cg`; linked `build-cg/cgjre` and `build-cg/cgjre.map`, and generated the real add-in `CGJRE.g3a`. `sh-elf-size build-cg/cgjre`: text 44,772, data 464, BSS 1,072 bytes. The calculator source still contains only the smoke screen.
+PASS: `fxsdk build-cg`; linked `build-cg/cgjre` and `build-cg/cgjre.map`, and generated the real add-in `CGJRE.g3a`. `sh-elf-size build-cg/cgjre`: text 46,252, data 464, BSS 1,072 bytes. The calculator source still contains only the smoke screen.
 
-PASS: `cmake -S . -B /tmp/cgjre-asan -DCGJRE_HOST=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'`; build; `ASAN_OPTIONS=detect_leaks=0 ctest --test-dir /tmp/cgjre-asan --output-on-failure` (4/4). Leak detection is disabled because LeakSanitizer fails in this ptrace sandbox before tests run; no passing leak check is claimed.
+PASS: `cmake -S . -B /tmp/cgjre-asan -DCGJRE_HOST=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'`; build; `ASAN_OPTIONS=detect_leaks=0 ctest --test-dir /tmp/cgjre-asan --output-on-failure` (5/5). Leak detection is disabled because LeakSanitizer fails in this ptrace sandbox before tests run; no passing leak check is claimed.
 
 NOT RUN: calculator hardware execution and independent Java ME emulator.
 
@@ -30,17 +30,17 @@ NOT RUN: calculator hardware execution and independent Java ME emulator.
 - M1 class parser has no full verifier; valid static structure is not executable correctness. Static references can be unreachable or unresolved.
 - The resource limit of 4 MiB is a bound, not measured available calculator memory. A device-specific lower limit may be needed.
 - The selected Wireless Toolkit API archives, preverifier, and emulator have not been installed or tested locally.
-- Long and reference values, cross-class/virtual calls, linkage, objects, Java exceptions, class library, MIDP, game sample, and packaging remain pending. The integer fixture runner returns explicit errors for unsupported semantics.
+- Long and reference values, inherited/virtual calls, objects, arrays, class initialization, Java exceptions, class library, MIDP, game sample, and packaging remain pending. The JAR fixture runner returns explicit errors for unsupported semantics.
 - Farm Frenzy 2 statically references RMS and media Player APIs. A file-backed RMS subset and silent media compatibility layer are user-approved planned extensions, not implemented behavior. Gish additionally references Nokia and Bluetooth APIs that remain out of scope.
 
 ## Memory and performance
 
-No device measurements. One estimated physical RGB565 framebuffer is 177,408 bytes. Archive and frame allocation bounds are recorded in `docs/memory-budget.md`; no Java heap exists yet.
+No device measurements. One estimated physical RGB565 framebuffer is 177,408 bytes. Archive, class-cache, and frame allocation bounds are recorded in `docs/memory-budget.md`; no Java heap exists yet.
 
 ## Artifacts
 
-Cross-built `CGJRE.g3a`: SHA-256 `66fcb62c4ddc336054a072640302017ec808c3fbb8f2caf584d3b11a94b95da6`. The user-supplied `samples/farm2.jar` and `samples/gish.jar` are local-only and ignored by Git; their checksums and static results are in `docs/compatibility-results.md`. No released add-in exists.
+Cross-built `CGJRE.g3a`: SHA-256 `88e2e1db8322de089f364628c3ab4743cc0c20104d28614a8d5f15c786157faa`. The user-supplied `samples/farm2.jar` and `samples/gish.jar` are local-only and ignored by Git; their checksums and static results are in `docs/compatibility-results.md`. No released add-in exists.
 
 ## Next smallest task
 
-Add a JAR-backed class repository and cross-class static integer method resolution while preserving class-buffer ownership and rejecting unresolved initialization semantics. Acceptance: an external two-class JAR fixture executes a nested static call on the shared host core, missing classes/members fail with context, and the source cross-compiles for SH. Then prioritize reference handles, fields, arrays, and virtual dispatch evidenced by Farm Frenzy 2.
+Add a bounded reference-handle table and primitive int-array allocation/access as the next Farm-relevant VM slice. Acceptance: external JAR fixtures exercise `newarray`, `iaload`, `iastore`, `arraylength`, and null/bounds failures with explicit results; the same core cross-compiles for SH. Then extend handles to objects, fields, constructors, and virtual dispatch.

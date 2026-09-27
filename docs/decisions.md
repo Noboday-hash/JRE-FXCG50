@@ -14,7 +14,7 @@ Use [Eclipse ECJ 3.26.0](https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.26
 
 ## 2026-09-27 — Integer VM slot model
 
-Use 32-bit value bits plus an explicit kind per Java slot and bounded explicit frames. Reserve zero as the future null reference handle and adjacent tagged high/low slots for category-2 values. This prevents host pointer truncation and makes reference roots identifiable for later GC. The first executable slice accepts only static integer methods without class initialization, monitors, or exception tables; tests cover wraparound, signed division, branches, local slots, malformed code, and explicit unsupported results. Long values, cross-class and virtual calls, objects, and Java exception delivery remain pending.
+Use 32-bit value bits plus an explicit kind per Java slot and bounded explicit frames. Reserve zero as the future null reference handle and adjacent tagged high/low slots for category-2 values. This prevents host pointer truncation and makes reference roots identifiable for later GC. The first executable slice accepts only static integer methods without class initialization, monitors, or exception tables; tests cover wraparound, signed division, branches, local slots, malformed code, and explicit unsupported results. Long values, virtual calls, objects, and Java exception delivery remain pending.
 
 ## 2026-09-27 — Class format 46.0
 
@@ -23,3 +23,7 @@ Gish Reloaded includes 28 class files with version 46.0. [Oracle's class-file ve
 ## 2026-09-27 — Farm Frenzy 2 compatibility extensions
 
 Use Farm Frenzy 2 as the first user-supplied old-phone MIDlet compatibility target. It statically references RMS saves and media Player APIs. With user approval, plan a small file-backed RMS subset and a silent media compatibility layer with no audio playback, using the exact referenced descriptors in `docs/api-matrix.csv`. These are named extensions to the original baseline scope, not implemented features yet. Test record persistence and media state/error behavior against the selected reference emulator before claiming game compatibility. The supplied game JARs remain local-only and must not be committed or redistributed.
+
+## 2026-09-27 — JAR class ownership and resolution
+
+Use an on-demand class repository backed by the bounded ZIP reader. It owns class bytes and metadata for the suite lifetime, caches up to 128 classes, validates requested internal names, and rejects application classes in `java/` or `javax/`. The VM resolves cross-class `invokestatic` through an injected callback, preserving the shared host/calculator core. Compatibility effect: static integer calls across ordinary external JAR classes can execute; initialization, inherited lookup, objects, and MIDlet launch remain unsupported. Tests: stored and compressed two-class JARs, repeated resolution, missing/mismatched/protected classes, size limit, and a real ECJ-built two-class JAR.

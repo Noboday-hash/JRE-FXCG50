@@ -183,7 +183,7 @@ byte,mnemonic,operands,profile,status,tests
 0xb5,putfield,cp2,baseline,not_implemented,
 0xb6,invokevirtual,cp2,baseline,not_implemented,
 0xb7,invokespecial,cp2,baseline,not_implemented,
-0xb8,invokestatic,cp2,baseline,partial_same_class_integer,tests/test_vm_int.py
+0xb8,invokestatic,cp2,baseline,partial_static_integer,tests/test_vm_int.py;tests/test_vm_jar.py
 0xb9,invokeinterface,"cp2,u1,u1",baseline,not_implemented,
 0xba,invokedynamic,"cp2,u1,u1",out_of_scope,rejected,
 0xbb,new,cp2,baseline,not_implemented,

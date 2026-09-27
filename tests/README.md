@@ -7,3 +7,5 @@ The class fixtures also cover SourceFile and line metadata, opcode counting, swi
 The M2 integer VM fixtures construct class files independently of the interpreter and check arithmetic edge cases, branches, locals, stack faults, unsupported operations, and the step limit through `cgjre-host --eval-class`. A separate locally downloaded ECJ 3.26.0 class was compiled and evaluated as an additional manual check; the default CTest suite does not download that compiler.
 
 The integer fixtures also cover 46.0 class parsing, same-class static calls, recursion, missing and external members, callee faults, and the frame cap. The two user-supplied games are static compatibility probes only; the test suite does not execute or package them.
+
+`test_vm_jar.py` builds external stored and compressed two-class JARs and checks cross-class calls, cache reuse, missing classes/members, class-name mismatch, platform-package protection, the class-size limit, and unsupported initialization. A separate ECJ 3.26.0 two-class JAR was compiled and evaluated manually; it is not required by CTest.

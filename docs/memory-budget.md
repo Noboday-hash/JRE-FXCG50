@@ -7,3 +7,5 @@ Before M1/M2 allocations, record actual calculator model, OS, gint configuration
 M1 archive limits are 1,024 entries, 1 MiB central-directory metadata, 4 MiB inflated bytes per entry, and 1 MiB per class file. The reader allocates a maximum 65,557-byte EOCD tail, entry metadata, one extracted resource, a 4 KiB DEFLATE input buffer, and the miniz state. These are hard limits and possible peak allocations, not a claim that the calculator can reserve all of them. Failed allocations return explicit errors. A lower measured calculator budget must be configured before game loading is enabled.
 
 The M2 fixture interpreter caps a frame at 4,096 locals and 4,096 operand slots and allocates an instruction-boundary byte per method byte. It permits up to 32 active frames. These limits are not a Java heap budget; no objects or GC exist yet.
+
+The JAR class repository caps loaded classes at 128 and retains each extracted class buffer plus parsed metadata until suite close. It refuses a class entry larger than 1 MiB before extraction. Actual peak memory on the calculator is unmeasured and will need a lower configured limit if this cap exceeds safe available memory.

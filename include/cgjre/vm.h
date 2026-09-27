@@ -27,6 +27,8 @@ typedef enum {
     CGJRE_VM_INVALID_CODE,
     CGJRE_VM_UNSUPPORTED,
     CGJRE_VM_MISSING_MEMBER,
+    CGJRE_VM_MISSING_CLASS,
+    CGJRE_VM_CLASS_LOAD_ERROR,
     CGJRE_VM_DIVIDE_BY_ZERO,
     CGJRE_VM_LIMIT,
     CGJRE_VM_NOMEM
@@ -40,12 +42,19 @@ typedef struct {
     uint8_t opcode;
     uint16_t method_index;
     uint16_t cp_index;
+    const cgjre_classfile *active_class; /* Borrowed until its repository closes. */
 } cgjre_vm_result;
+
+typedef cgjre_vm_status (*cgjre_vm_resolve_class)(void *context,
+    const char *internal_name, const cgjre_classfile **out);
 
 /* M2 integer slice: static (I...)I methods without class initialization. */
 cgjre_vm_result cgjre_vm_execute_int(const cgjre_classfile *file,
     uint16_t method_index, const int32_t *arguments, size_t argument_count,
     uint32_t step_limit);
+cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
+    uint16_t method_index, const int32_t *arguments, size_t argument_count,
+    uint32_t step_limit, cgjre_vm_resolve_class resolver, void *context);
 const char *cgjre_vm_status_name(cgjre_vm_status status);
 
 #endif
