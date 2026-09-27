@@ -8,6 +8,7 @@
 - Accepted class format 46.0 after old-phone JAR inspection and fixtures.
 - Added an owned JAR class cache and cross-class static integer calls through a resolver callback.
 - Added bounded primitive-array handles and reference bytecodes for static integer fixtures.
+- Added direct-Object instances, constructor frames, and checked integer/reference field access.
 
 ## Unreleased — M1 in progress
 

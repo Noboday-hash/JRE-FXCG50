@@ -1,4 +1,5 @@
 class,member,descriptor,profile,status,semantics,limitations,tests
+java/lang/Object,<init>,()V,baseline,partial_builtin,Mark direct Object superclass constructor completion,Only inside supported direct Object subclass constructors,tests/test_vm_objects.py
 javax/microedition/rms/RecordStore,openRecordStore,(Ljava/lang/String;Z)Ljavax/microedition/rms/RecordStore;,farm_extension,planned,Open or create named file-backed store,Subset only,
 javax/microedition/rms/RecordStore,addRecord,([BII)I,farm_extension,planned,Append record bytes and return record ID,Subset only,
 javax/microedition/rms/RecordStore,setRecord,(I[BII)V,farm_extension,planned,Replace record bytes by ID,Subset only,

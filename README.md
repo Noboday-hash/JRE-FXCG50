@@ -26,6 +26,6 @@ fxsdk build-cg
 The generated add-in is `CGJRE.g3a` at the repository root. The linked ELF and map are in `build-cg/`. On an fx-CG50, the smoke screen should appear and EXIT should return to the OS. Hardware execution has not yet been verified. The host inspector reports ZIP sizes, manifest attributes, class versions, opcode usage, native methods, and referenced members. Static inspection cannot prove game compatibility.
 
 `--eval-class` runs a limited static integer method directly from a 45.3 class file for M2 semantic tests. It does not initialize or launch a MIDlet. See `PROJECT_STATE.md` for its supported scope.
-`--eval-jar` runs the same limited method from an external JAR and can resolve static integer calls to other classes in that JAR. The fixture VM also supports bounded primitive arrays. These commands do not launch a MIDlet.
+`--eval-jar` runs the same limited method from an external JAR and can resolve static integer calls to other classes in that JAR. The fixture VM also supports bounded primitive arrays and simple constructed objects with integer/reference fields. These commands do not launch a MIDlet.
 
 See [SPEC.md](SPEC.md), [PROJECT_STATE.md](PROJECT_STATE.md), and [docs/toolchain.md](docs/toolchain.md) for scope and current evidence.

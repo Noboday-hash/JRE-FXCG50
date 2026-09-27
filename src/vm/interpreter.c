@@ -8,6 +8,8 @@ typedef struct {
     const cgjre_classfile *file;
     const cgjre_class_member *method;
     uint16_t method_index;
+    uint32_t constructor_handle;
+    char return_type;
     cgjre_vm_slot *locals;
     cgjre_vm_slot *stack;
     uint8_t *starts;
@@ -19,15 +21,33 @@ typedef struct {
     uint32_t length;
     uint8_t atype;
     void *data;
-    size_t payload_bytes;
 } cgjre_vm_array;
+
+typedef struct {
+    const cgjre_classfile *klass;
+    cgjre_vm_slot *fields;
+    uint16_t field_count;
+    uint8_t super_called;
+    uint8_t initialized;
+} cgjre_vm_object;
+
+typedef struct {
+    uint8_t kind;
+    size_t payload_bytes;
+    union {
+        cgjre_vm_array array;
+        cgjre_vm_object object;
+    } as;
+} cgjre_vm_heap_item;
+
+enum { CGJRE_HEAP_ARRAY = 1, CGJRE_HEAP_OBJECT = 2 };
 
 typedef struct {
     cgjre_vm_frame frames[CGJRE_VM_MAX_FRAMES];
     unsigned depth;
-    cgjre_vm_array *handles[CGJRE_VM_MAX_HANDLES];
+    cgjre_vm_heap_item *handles[CGJRE_VM_MAX_HANDLES];
     uint16_t handle_count;
-    size_t array_bytes;
+    size_t heap_bytes;
 } cgjre_vm_context;
 
 static uint16_t read16(const uint8_t *p)
@@ -74,7 +94,8 @@ static uint32_t arithmetic_shift(uint32_t bits, unsigned count)
 
 static int category_one(cgjre_slot_kind kind)
 {
-    return kind == CGJRE_SLOT_INT || kind == CGJRE_SLOT_REFERENCE;
+    return kind == CGJRE_SLOT_INT || kind == CGJRE_SLOT_REFERENCE ||
+        kind == CGJRE_SLOT_UNINITIALIZED_REFERENCE;
 }
 
 static int push_slot(cgjre_vm_frame *frame, cgjre_vm_slot slot)
@@ -92,6 +113,12 @@ static int push_int(cgjre_vm_frame *frame, uint32_t bits)
 static int push_ref(cgjre_vm_frame *frame, uint32_t handle)
 {
     return push_slot(frame, (cgjre_vm_slot){handle, CGJRE_SLOT_REFERENCE});
+}
+
+static int push_uninitialized_ref(cgjre_vm_frame *frame, uint32_t handle)
+{
+    return push_slot(frame,
+        (cgjre_vm_slot){handle, CGJRE_SLOT_UNINITIALIZED_REFERENCE});
 }
 
 static int pop_category_one(cgjre_vm_frame *frame, cgjre_vm_slot *slot)
@@ -132,8 +159,9 @@ static int load_int(cgjre_vm_frame *frame, unsigned index)
 static int load_ref(cgjre_vm_frame *frame, unsigned index)
 {
     return index < frame->method->max_locals &&
-        frame->locals[index].kind == CGJRE_SLOT_REFERENCE &&
-        push_ref(frame, frame->locals[index].bits);
+        (frame->locals[index].kind == CGJRE_SLOT_REFERENCE ||
+         frame->locals[index].kind == CGJRE_SLOT_UNINITIALIZED_REFERENCE) &&
+        push_slot(frame, frame->locals[index]);
 }
 
 static int store_int(cgjre_vm_frame *frame, unsigned index)
@@ -147,18 +175,22 @@ static int store_int(cgjre_vm_frame *frame, unsigned index)
 
 static int store_ref(cgjre_vm_frame *frame, unsigned index)
 {
-    uint32_t handle;
-    if(index >= frame->method->max_locals || !pop_ref(frame, &handle))
+    cgjre_vm_slot slot;
+    if(index >= frame->method->max_locals ||
+       !frame->sp ||
+       (frame->stack[frame->sp - 1].kind != CGJRE_SLOT_REFERENCE &&
+        frame->stack[frame->sp - 1].kind !=
+            CGJRE_SLOT_UNINITIALIZED_REFERENCE) ||
+       !pop_category_one(frame, &slot))
         return 0;
-    frame->locals[index] =
-        (cgjre_vm_slot){handle, CGJRE_SLOT_REFERENCE};
+    frame->locals[index] = slot;
     return 1;
 }
 
 static cgjre_vm_status allocate_array(cgjre_vm_context *context,
     uint8_t atype, uint32_t length, uint32_t *handle)
 {
-    cgjre_vm_array *array;
+    cgjre_vm_heap_item *item;
     size_t width, bytes;
     if(atype != 4 && atype != 5 && atype != 8 &&
        atype != 9 && atype != 10)
@@ -169,32 +201,106 @@ static cgjre_vm_status allocate_array(cgjre_vm_context *context,
     width = atype == 10 ? sizeof(uint32_t) :
         ((atype == 5 || atype == 9) ? sizeof(uint16_t) : sizeof(uint8_t));
     bytes = (size_t)length * width;
-    if(bytes > CGJRE_VM_ARRAY_BUDGET_BYTES - context->array_bytes)
+    if(bytes > CGJRE_VM_ARRAY_BUDGET_BYTES - context->heap_bytes)
         return CGJRE_VM_LIMIT;
-    array = calloc(1, sizeof(*array));
-    if(!array) return CGJRE_VM_NOMEM;
-    array->data = calloc(bytes ? bytes : 1u, 1);
-    if(!array->data) { free(array); return CGJRE_VM_NOMEM; }
-    array->length = length;
-    array->atype = atype;
-    array->payload_bytes = bytes;
-    context->array_bytes += bytes;
+    item = calloc(1, sizeof(*item));
+    if(!item) return CGJRE_VM_NOMEM;
+    item->as.array.data = calloc(bytes ? bytes : 1u, 1);
+    if(!item->as.array.data) { free(item); return CGJRE_VM_NOMEM; }
+    item->kind = CGJRE_HEAP_ARRAY;
+    item->as.array.length = length;
+    item->as.array.atype = atype;
+    item->payload_bytes = bytes;
+    context->heap_bytes += bytes;
     *handle = ++context->handle_count;
-    context->handles[*handle] = array;
+    context->handles[*handle] = item;
     return CGJRE_VM_OK;
 }
 
 static cgjre_vm_array *get_array(cgjre_vm_context *context,
     uint32_t handle)
 {
-    return handle > 0 && handle <= context->handle_count ?
-        context->handles[handle] : NULL;
+    if(!handle || handle > context->handle_count ||
+       context->handles[handle]->kind != CGJRE_HEAP_ARRAY) return NULL;
+    return &context->handles[handle]->as.array;
 }
 
-static void free_arrays(cgjre_vm_context *context)
+static cgjre_vm_object *get_object(cgjre_vm_context *context,
+    uint32_t handle)
+{
+    if(!handle || handle > context->handle_count ||
+       context->handles[handle]->kind != CGJRE_HEAP_OBJECT) return NULL;
+    return &context->handles[handle]->as.object;
+}
+
+static cgjre_slot_kind field_kind(const cgjre_classfile *file,
+    uint16_t field_index)
+{
+    const cgjre_class_member *field = &file->fields[field_index];
+    const cgjre_cp_entry *entry = &file->cp[field->descriptor_index];
+    const uint8_t *descriptor = file->bytes + entry->offset;
+    if(entry->length == 1 && descriptor[0] == 'I')
+        return CGJRE_SLOT_INT;
+    if(entry->length >= 2 &&
+       (descriptor[0] == 'L' || descriptor[0] == '['))
+        return CGJRE_SLOT_REFERENCE;
+    return CGJRE_SLOT_EMPTY;
+}
+
+static cgjre_vm_status allocate_object(cgjre_vm_context *context,
+    const cgjre_classfile *file, uint32_t *handle)
+{
+    cgjre_vm_heap_item *item;
+    size_t bytes = (size_t)file->field_count * sizeof(cgjre_vm_slot);
+    if(context->handle_count + 1u >= CGJRE_VM_MAX_HANDLES ||
+       bytes > CGJRE_VM_ARRAY_BUDGET_BYTES - context->heap_bytes)
+        return CGJRE_VM_LIMIT;
+    for(uint16_t i = 0; i < file->field_count; ++i)
+        if(!(file->fields[i].access_flags & 0x0008u) &&
+           field_kind(file, i) == CGJRE_SLOT_EMPTY)
+            return CGJRE_VM_UNSUPPORTED;
+    item = calloc(1, sizeof(*item));
+    if(!item) return CGJRE_VM_NOMEM;
+    item->as.object.fields = calloc(file->field_count ?
+        file->field_count : 1u, sizeof(cgjre_vm_slot));
+    if(!item->as.object.fields) { free(item); return CGJRE_VM_NOMEM; }
+    item->kind = CGJRE_HEAP_OBJECT;
+    item->payload_bytes = bytes;
+    item->as.object.klass = file;
+    item->as.object.field_count = file->field_count;
+    for(uint16_t i = 0; i < file->field_count; ++i)
+        if(!(file->fields[i].access_flags & 0x0008u))
+            item->as.object.fields[i].kind = field_kind(file, i);
+    context->heap_bytes += bytes;
+    *handle = ++context->handle_count;
+    context->handles[*handle] = item;
+    return CGJRE_VM_OK;
+}
+
+static void promote_in_frame(cgjre_vm_frame *frame, uint32_t handle)
+{
+    for(uint16_t i = 0; i < frame->method->max_locals; ++i)
+        if(frame->locals[i].kind == CGJRE_SLOT_UNINITIALIZED_REFERENCE &&
+           frame->locals[i].bits == handle)
+            frame->locals[i].kind = CGJRE_SLOT_REFERENCE;
+    for(uint32_t i = 0; i < frame->sp; ++i)
+        if(frame->stack[i].kind == CGJRE_SLOT_UNINITIALIZED_REFERENCE &&
+           frame->stack[i].bits == handle)
+            frame->stack[i].kind = CGJRE_SLOT_REFERENCE;
+}
+
+static void promote_all_frames(cgjre_vm_context *context, uint32_t handle)
+{
+    for(unsigned i = 0; i < context->depth; ++i)
+        promote_in_frame(&context->frames[i], handle);
+}
+
+static void free_handles(cgjre_vm_context *context)
 {
     for(uint16_t i = 1; i <= context->handle_count; ++i) {
-        free(context->handles[i]->data);
+        cgjre_vm_heap_item *item = context->handles[i];
+        if(item->kind == CGJRE_HEAP_ARRAY) free(item->as.array.data);
+        else free(item->as.object.fields);
         free(context->handles[i]);
     }
 }
@@ -207,18 +313,37 @@ static int increment(cgjre_vm_frame *frame, unsigned index, int32_t amount)
     return 1;
 }
 
-static int method_arguments(const cgjre_classfile *file,
-    const cgjre_class_member *method, size_t *count)
+static int descriptor_signature(const cgjre_classfile *file,
+    uint16_t descriptor_index, size_t *count, char *return_type)
 {
-    const cgjre_cp_entry *entry = &file->cp[method->descriptor_index];
+    if(!descriptor_index || descriptor_index >= file->cp_count ||
+       file->cp[descriptor_index].tag != 1) return 0;
+    const cgjre_cp_entry *entry = &file->cp[descriptor_index];
     const uint8_t *text = file->bytes + entry->offset;
     size_t i = 1, n = 0;
     if(entry->length < 3 || text[0] != '(') return 0;
     while(i < entry->length && text[i] == 'I') { ++i; ++n; }
-    if(i + 2 != entry->length || text[i] != ')' || text[i + 1] != 'I')
+    if(i + 2 != entry->length || text[i] != ')' ||
+       (text[i + 1] != 'I' && text[i + 1] != 'V'))
         return 0;
     *count = n;
+    *return_type = (char)text[i + 1];
     return 1;
+}
+
+static int method_signature(const cgjre_classfile *file,
+    const cgjre_class_member *method, size_t *count, char *return_type)
+{
+    return descriptor_signature(file, method->descriptor_index,
+        count, return_type);
+}
+
+static int method_arguments(const cgjre_classfile *file,
+    const cgjre_class_member *method, size_t *count)
+{
+    char return_type;
+    return method_signature(file, method, count, &return_type) &&
+        return_type == 'I';
 }
 
 static int has_class_initializer(const cgjre_classfile *file)
@@ -263,6 +388,157 @@ static int same_utf8(const cgjre_classfile *left, uint16_t first,
     return a->length == b->length &&
         memcmp(left->bytes + a->offset, right->bytes + b->offset,
             a->length) == 0;
+}
+
+static int utf8_equals_ascii(const cgjre_classfile *file,
+    uint16_t index, const char *literal)
+{
+    if(!index || index >= file->cp_count || file->cp[index].tag != 1)
+        return 0;
+    const cgjre_cp_entry *entry = &file->cp[index];
+    size_t length = strlen(literal);
+    return entry->length == length &&
+        memcmp(file->bytes + entry->offset, literal, length) == 0;
+}
+
+static uint16_t class_name_index(const cgjre_classfile *file,
+    uint16_t class_index)
+{
+    return read16(file->bytes + file->cp[class_index].offset);
+}
+
+static cgjre_vm_status resolve_class_operand(const cgjre_classfile *file,
+    uint16_t class_index, cgjre_vm_resolve_class resolver, void *context,
+    const cgjre_classfile **target)
+{
+    if(!class_index || class_index >= file->cp_count ||
+       file->cp[class_index].tag != 7) return CGJRE_VM_INVALID_CODE;
+    if(class_index == file->this_class) *target = file;
+    else {
+        char name[256];
+        uint16_t index = class_name_index(file, class_index);
+        if(!resolver || cgjre_class_ascii(file, index, name,
+           sizeof(name)) != CGJRE_CLASS_OK) return CGJRE_VM_UNSUPPORTED;
+        cgjre_vm_status status = resolver(context, name, target);
+        if(status != CGJRE_VM_OK) return status;
+        if(!*target) return CGJRE_VM_MISSING_CLASS;
+    }
+    if(has_class_initializer(*target) || !direct_object_super(*target))
+        return CGJRE_VM_UNSUPPORTED;
+    return CGJRE_VM_OK;
+}
+
+static cgjre_vm_status resolve_instance_field(
+    const cgjre_classfile *caller, uint16_t cp_index,
+    const cgjre_vm_object *object, uint16_t *field_index,
+    cgjre_slot_kind *kind)
+{
+    if(!cp_index || cp_index >= caller->cp_count ||
+       caller->cp[cp_index].tag != 9) return CGJRE_VM_INVALID_CODE;
+    const uint8_t *reference = caller->bytes + caller->cp[cp_index].offset;
+    uint16_t owner = read16(reference);
+    const cgjre_classfile *klass = object->klass;
+    if(!same_utf8(caller, class_name_index(caller, owner), klass,
+       class_name_index(klass, klass->this_class)))
+        return CGJRE_VM_UNSUPPORTED;
+    const uint8_t *name_type = caller->bytes +
+        caller->cp[read16(reference + 2)].offset;
+    uint16_t name = read16(name_type), descriptor = read16(name_type + 2);
+    for(uint16_t i = 0; i < klass->field_count; ++i) {
+        const cgjre_class_member *field = &klass->fields[i];
+        if(same_utf8(caller, name, klass, field->name_index) &&
+           same_utf8(caller, descriptor, klass,
+               field->descriptor_index)) {
+            if(field->access_flags & 0x0008u)
+                return CGJRE_VM_UNSUPPORTED;
+            *kind = field_kind(klass, i);
+            if(*kind == CGJRE_SLOT_EMPTY) return CGJRE_VM_UNSUPPORTED;
+            *field_index = i;
+            return CGJRE_VM_OK;
+        }
+    }
+    return CGJRE_VM_MISSING_FIELD;
+}
+
+static cgjre_vm_status resolve_constructor(const cgjre_classfile *caller,
+    uint16_t cp_index, const cgjre_vm_object *object,
+    uint16_t *method_index, size_t *arguments, int *object_builtin)
+{
+    if(!cp_index || cp_index >= caller->cp_count ||
+       caller->cp[cp_index].tag != 10) return CGJRE_VM_INVALID_CODE;
+    const uint8_t *reference = caller->bytes + caller->cp[cp_index].offset;
+    uint16_t owner = read16(reference);
+    uint16_t owner_name = class_name_index(caller, owner);
+    const uint8_t *name_type = caller->bytes +
+        caller->cp[read16(reference + 2)].offset;
+    uint16_t name = read16(name_type), descriptor = read16(name_type + 2);
+    if(!utf8_equals_ascii(caller, name, "<init>"))
+        return CGJRE_VM_UNSUPPORTED;
+    if(utf8_equals_ascii(caller, owner_name, "java/lang/Object")) {
+        if(!utf8_equals_ascii(caller, descriptor, "()V"))
+            return CGJRE_VM_UNSUPPORTED;
+        *object_builtin = 1;
+        *arguments = 0;
+        return CGJRE_VM_OK;
+    }
+    const cgjre_classfile *klass = object->klass;
+    if(!same_utf8(caller, owner_name, klass,
+       class_name_index(klass, klass->this_class)))
+        return CGJRE_VM_UNSUPPORTED;
+    *object_builtin = 0;
+    for(uint16_t i = 0; i < klass->method_count; ++i) {
+        const cgjre_class_member *method = &klass->methods[i];
+        char return_type;
+        if(same_utf8(caller, name, klass, method->name_index) &&
+           same_utf8(caller, descriptor, klass,
+               method->descriptor_index)) {
+            if((method->access_flags & 0x0528u) ||
+               method->exception_count || !method->code_length ||
+               !method_signature(klass, method, arguments,
+                   &return_type) || return_type != 'V')
+                return CGJRE_VM_UNSUPPORTED;
+            *method_index = i;
+            return CGJRE_VM_OK;
+        }
+    }
+    return CGJRE_VM_MISSING_MEMBER;
+}
+
+static int reference_assignable(cgjre_vm_context *context,
+    const cgjre_classfile *klass, uint16_t field_index, uint32_t handle)
+{
+    if(!handle) return 1;
+    if(handle > context->handle_count) return 0;
+    const cgjre_vm_heap_item *item = context->handles[handle];
+    const cgjre_class_member *field = &klass->fields[field_index];
+    const cgjre_cp_entry *entry = &klass->cp[field->descriptor_index];
+    const uint8_t *descriptor = klass->bytes + entry->offset;
+    if(entry->length == 18 &&
+       memcmp(descriptor, "Ljava/lang/Object;", 18) == 0) return 1;
+    if(descriptor[0] == '[' && entry->length == 2 &&
+       item->kind == CGJRE_HEAP_ARRAY) {
+        uint8_t atype = item->as.array.atype;
+        return (descriptor[1] == 'Z' && atype == 4) ||
+            (descriptor[1] == 'C' && atype == 5) ||
+            (descriptor[1] == 'B' && atype == 8) ||
+            (descriptor[1] == 'S' && atype == 9) ||
+            (descriptor[1] == 'I' && atype == 10);
+    }
+    if(descriptor[0] != 'L' || entry->length < 3 ||
+       item->kind != CGJRE_HEAP_OBJECT) return 0;
+    const cgjre_classfile *value_class = item->as.object.klass;
+    uint16_t index = class_name_index(value_class, value_class->this_class);
+    const cgjre_cp_entry *name = &value_class->cp[index];
+    return name->length == entry->length - 2u &&
+        memcmp(value_class->bytes + name->offset, descriptor + 1,
+            name->length) == 0;
+}
+
+static int object_accessible(const cgjre_vm_frame *frame,
+    const cgjre_vm_object *object, uint32_t handle)
+{
+    return object->initialized ||
+        (frame->constructor_handle == handle && object->super_called);
 }
 
 static cgjre_vm_status resolve_static_call(const cgjre_classfile *file,
@@ -318,9 +594,12 @@ static cgjre_vm_status initialize_frame(cgjre_vm_frame *frame,
 {
     const cgjre_class_member *method = &file->methods[method_index];
     uint32_t counts[256];
+    size_t ignored_arguments;
     frame->file = file;
     frame->method = method;
     frame->method_index = method_index;
+    if(!method_signature(file, method, &ignored_arguments,
+        &frame->return_type)) return CGJRE_VM_UNSUPPORTED;
     if(method->max_stack > CGJRE_VM_MAX_SLOTS ||
        method->max_locals > CGJRE_VM_MAX_SLOTS)
         return CGJRE_VM_LIMIT;
@@ -353,12 +632,14 @@ const char *cgjre_vm_status_name(cgjre_vm_status status)
     case CGJRE_VM_INVALID_CODE: return "invalid bytecode or stack state";
     case CGJRE_VM_UNSUPPORTED: return "unsupported VM feature";
     case CGJRE_VM_MISSING_MEMBER: return "missing method member";
+    case CGJRE_VM_MISSING_FIELD: return "missing field member";
     case CGJRE_VM_MISSING_CLASS: return "missing class";
     case CGJRE_VM_CLASS_LOAD_ERROR: return "class loading error";
     case CGJRE_VM_DIVIDE_BY_ZERO: return "integer division by zero";
-    case CGJRE_VM_NULL_REFERENCE: return "null array reference";
+    case CGJRE_VM_NULL_REFERENCE: return "null reference";
     case CGJRE_VM_ARRAY_BOUNDS: return "array index out of bounds";
     case CGJRE_VM_NEGATIVE_ARRAY_SIZE: return "negative array size";
+    case CGJRE_VM_UNINITIALIZED_OBJECT: return "uninitialized object";
     case CGJRE_VM_LIMIT: return "VM execution limit reached";
     case CGJRE_VM_NOMEM: return "out of memory";
     }
@@ -673,6 +954,152 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
                 INVALID();
             }
             continue;
+        case 0xb1: {
+            cgjre_vm_object *object;
+            if(frame->return_type != 'V' || frame->sp != 0 ||
+               !frame->constructor_handle) INVALID();
+            a = frame->constructor_handle;
+            object = get_object(&context, a);
+            if(!object || !object->super_called) {
+                result.status = CGJRE_VM_UNINITIALIZED_OBJECT;
+                goto done;
+            }
+            object->initialized = 1;
+            destroy_frame(frame);
+            --context.depth;
+            if(!context.depth) INVALID();
+            promote_all_frames(&context, a);
+            continue;
+        }
+        case 0xb4: case 0xb5: {
+            uint16_t index = read16(code + frame->pc + 1);
+            uint16_t field_index;
+            cgjre_slot_kind kind;
+            cgjre_vm_object *object;
+            cgjre_vm_status status;
+            cgjre_vm_slot value = {0};
+            result.cp_index = index;
+            if(op == 0xb5) {
+                if(frame->sp < 2) INVALID();
+                value = frame->stack[frame->sp - 1];
+                if(frame->stack[frame->sp - 2].kind ==
+                   CGJRE_SLOT_UNINITIALIZED_REFERENCE) {
+                    result.status = CGJRE_VM_UNINITIALIZED_OBJECT;
+                    goto done;
+                }
+                if(frame->stack[frame->sp - 2].kind != CGJRE_SLOT_REFERENCE)
+                    INVALID();
+                a = frame->stack[frame->sp - 2].bits;
+            }
+            else {
+                if(frame->sp && frame->stack[frame->sp - 1].kind ==
+                   CGJRE_SLOT_UNINITIALIZED_REFERENCE) {
+                    result.status = CGJRE_VM_UNINITIALIZED_OBJECT;
+                    goto done;
+                }
+                if(!pop_ref(frame, &a)) INVALID();
+            }
+            if(!a) { result.status = CGJRE_VM_NULL_REFERENCE; goto done; }
+            object = get_object(&context, a);
+            if(!object) INVALID();
+            if(!object_accessible(frame, object, a)) {
+                result.status = CGJRE_VM_UNINITIALIZED_OBJECT;
+                goto done;
+            }
+            status = resolve_instance_field(active_file, index, object,
+                &field_index, &kind);
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            if(op == 0xb4) {
+                if(!push_slot(frame, object->fields[field_index])) INVALID();
+            }
+            else {
+                if(value.kind != kind ||
+                   (kind == CGJRE_SLOT_REFERENCE &&
+                    !reference_assignable(&context, object->klass,
+                        field_index, value.bits))) INVALID();
+                if((object->klass->fields[field_index].access_flags & 0x0010u) &&
+                   frame->constructor_handle != a) INVALID();
+                object->fields[field_index] = value;
+                frame->stack[--frame->sp].kind = CGJRE_SLOT_EMPTY;
+                frame->stack[--frame->sp].kind = CGJRE_SLOT_EMPTY;
+            }
+            next += 2;
+            break;
+        }
+        case 0xb7: {
+            uint16_t index = read16(code + frame->pc + 1);
+            uint16_t callee_index = 0;
+            size_t arguments = 0;
+            int object_builtin = 0;
+            cgjre_vm_status status;
+            cgjre_vm_object *object;
+            const uint8_t *reference, *name_type;
+            uint16_t descriptor;
+            char return_type;
+            result.cp_index = index;
+            if(!index || index >= active_file->cp_count ||
+               active_file->cp[index].tag != 10) INVALID();
+            reference = active_file->bytes + active_file->cp[index].offset;
+            name_type = active_file->bytes +
+                active_file->cp[read16(reference + 2)].offset;
+            descriptor = read16(name_type + 2);
+            if(!descriptor_signature(active_file, descriptor, &arguments,
+               &return_type) || return_type != 'V' ||
+               frame->sp < arguments + 1u) INVALID();
+            size_t receiver_index = frame->sp - arguments - 1u;
+            if(frame->stack[receiver_index].kind !=
+               CGJRE_SLOT_UNINITIALIZED_REFERENCE) {
+                result.status = CGJRE_VM_UNINITIALIZED_OBJECT;
+                goto done;
+            }
+            a = frame->stack[receiver_index].bits;
+            object = get_object(&context, a);
+            if(!object || object->initialized) INVALID();
+            for(size_t i = 0; i < arguments; ++i)
+                if(frame->stack[receiver_index + 1u + i].kind !=
+                   CGJRE_SLOT_INT) INVALID();
+            status = resolve_constructor(active_file, index, object,
+                &callee_index, &arguments, &object_builtin);
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            if(object_builtin) {
+                if(frame->constructor_handle != a || object->super_called)
+                    INVALID();
+                object->super_called = 1;
+                promote_in_frame(frame, a);
+                frame->stack[--frame->sp].kind = CGJRE_SLOT_EMPTY;
+                frame->pc += 3;
+                continue;
+            }
+            if(context.depth >= CGJRE_VM_MAX_FRAMES) {
+                result.status = CGJRE_VM_LIMIT;
+                goto done;
+            }
+            const cgjre_classfile *callee_class = object->klass;
+            if(arguments + 1u >
+               callee_class->methods[callee_index].max_locals) INVALID();
+            cgjre_vm_frame *callee = &context.frames[context.depth++];
+            status = initialize_frame(callee, callee_class, callee_index);
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            callee->constructor_handle = a;
+            callee->locals[0] =
+                (cgjre_vm_slot){a, CGJRE_SLOT_UNINITIALIZED_REFERENCE};
+            for(size_t i = 0; i < arguments; ++i)
+                callee->locals[i + 1u] = frame->stack[receiver_index + 1u + i];
+            for(uint32_t i = receiver_index; i < frame->sp; ++i)
+                frame->stack[i].kind = CGJRE_SLOT_EMPTY;
+            frame->sp = (uint32_t)receiver_index;
+            frame->pc += 3;
+            continue;
+        }
         case 0xb8: {
             uint16_t index = read16(code + frame->pc + 1);
             uint16_t callee_index;
@@ -711,6 +1138,25 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
             frame->sp -= (uint32_t)callee_arguments;
             frame->pc += 3;
             continue;
+        }
+        case 0xbb: {
+            uint16_t index = read16(code + frame->pc + 1);
+            const cgjre_classfile *target = NULL;
+            cgjre_vm_status status = resolve_class_operand(active_file,
+                index, resolver, resolver_context, &target);
+            result.cp_index = index;
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            status = allocate_object(&context, target, &a);
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            if(!push_uninitialized_ref(frame, a)) INVALID();
+            next += 2;
+            break;
         }
         case 0xbc: {
             uint32_t handle;
@@ -796,6 +1242,6 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
 done:
     while(context.depth)
         destroy_frame(&context.frames[--context.depth]);
-    free_arrays(&context);
+    free_handles(&context);
     return result;
 }

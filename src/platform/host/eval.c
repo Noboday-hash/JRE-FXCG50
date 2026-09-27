@@ -75,7 +75,8 @@ static void print_vm_error(const char *label, const char *method,
         shown_name, shown_descriptor, result.pc, result.opcode,
         cgjre_vm_status_name(result.status));
     if(file && result.cp_index && result.cp_index < file->cp_count &&
-       file->cp[result.cp_index].tag == 10) {
+       (file->cp[result.cp_index].tag == 9 ||
+        file->cp[result.cp_index].tag == 10)) {
         const uint8_t *reference = file->bytes +
             file->cp[result.cp_index].offset;
         uint16_t class_index = read_be16(reference);
@@ -91,6 +92,15 @@ static void print_vm_error(const char *label, const char *method,
            target_descriptor, sizeof(target_descriptor)) == CGJRE_CLASS_OK)
             fprintf(stderr, " target=%s%s", target_name,
                 target_descriptor);
+        if(cgjre_class_ascii(file, read_be16(class_entry), owner,
+           sizeof(owner)) == CGJRE_CLASS_OK)
+            fprintf(stderr, " class=%s", owner);
+    }
+    else if(file && result.cp_index && result.cp_index < file->cp_count &&
+            file->cp[result.cp_index].tag == 7) {
+        const uint8_t *class_entry = file->bytes +
+            file->cp[result.cp_index].offset;
+        char owner[256];
         if(cgjre_class_ascii(file, read_be16(class_entry), owner,
            sizeof(owner)) == CGJRE_CLASS_OK)
             fprintf(stderr, " class=%s", owner);

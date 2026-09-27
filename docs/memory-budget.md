@@ -10,4 +10,4 @@ The M2 fixture interpreter caps a frame at 4,096 locals and 4,096 operand slots 
 
 The JAR class repository caps loaded classes at 128 and retains each extracted class buffer plus parsed metadata until suite close. It refuses a class entry larger than 1 MiB before extraction. Actual peak memory on the calculator is unmeasured and will need a lower configured limit if this cap exceeds safe available memory.
 
-The M2 primitive-array fixture heap permits at most 255 live handles, 16,384 elements per array, and 256 KiB total array payload bytes per VM run. It allocates separate small array headers and frees every array when the run ends. These limits are development bounds; they do not establish available calculator RAM or provide GC.
+The M2 fixture heap permits at most 255 live handles, 16,384 elements per primitive array, and 256 KiB total array/object field payload bytes per VM run. It allocates separate small handle headers and frees every handle when the run ends. These limits are development bounds; they do not establish available calculator RAM or provide GC.

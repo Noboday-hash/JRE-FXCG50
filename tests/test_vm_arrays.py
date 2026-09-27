@@ -33,11 +33,11 @@ def main(executable):
               b"\x04\xbc\x09\x4b\x2a\x03\x11\xff\xff\x56"
               b"\x2a\x03\x35\xac", -1, max_stack=3)
         check(executable, folder, "null_length",
-              b"\x01\xbe\xac", "null array reference")
+              b"\x01\xbe\xac", "null reference")
         check(executable, folder, "null_load",
-              b"\x01\x03\x2e\xac", "null array reference")
+              b"\x01\x03\x2e\xac", "null reference")
         check(executable, folder, "null_store",
-              b"\x01\x03\x04\x4f\x03\xac", "null array reference")
+              b"\x01\x03\x04\x4f\x03\xac", "null reference")
         check(executable, folder, "negative_size",
               b"\x02\xbc\x0a", "negative array size")
         check(executable, folder, "upper_bound",

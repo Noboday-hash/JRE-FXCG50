@@ -11,3 +11,5 @@ The integer fixtures also cover 46.0 class parsing, same-class static calls, rec
 `test_vm_jar.py` builds external stored and compressed two-class JARs and checks cross-class calls, cache reuse, missing classes/members, class-name mismatch, platform-package protection, the class-size limit, and unsupported initialization. A separate ECJ 3.26.0 two-class JAR was compiled and evaluated manually; it is not required by CTest.
 
 `test_vm_arrays.py` checks primitive arrays, reference locals and branches, zero initialization, sign extension, null/bounds/negative-size failures, and allocation limits. It also executes an array method from an external JAR. An ECJ 3.26.0 class with a real `int[]` store/load returned 41 for input 41; that compiler is still optional for the default test suite.
+
+`test_vm_objects.py` uses independently assembled two-class JARs to check constructor ordering, default and assigned fields, null/uninitialized references, final-field rules, exact field descriptors, and reference-field assignability. A separate ECJ 3.26.0 `Box` program returned 41 after constructor assignment and `getfield`; it is an optional manual check.
