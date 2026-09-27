@@ -11,6 +11,7 @@ ctest --test-dir build-host --output-on-failure
 ./build-host/cgjre-host --smoke
 ./build-host/cgjre-host --inspect path/to/file.jar
 python3 tools/inspect_jar.py path/to/file.jar
+./build-host/cgjre-host --eval-class path/to/Arithmetic.class test '(I)I' 41
 ```
 
 ## Calculator smoke build
@@ -22,5 +23,7 @@ fxsdk build-cg
 ```
 
 The generated add-in is `CGJRE.g3a` at the repository root. The linked ELF and map are in `build-cg/`. On an fx-CG50, the smoke screen should appear and EXIT should return to the OS. Hardware execution has not yet been verified. The host inspector reports ZIP sizes, manifest attributes, class versions, opcode usage, native methods, and referenced members. Static inspection cannot prove game compatibility.
+
+`--eval-class` runs a limited static integer method directly from a 45.3 class file for M2 semantic tests. It does not initialize or launch a MIDlet. See `PROJECT_STATE.md` for its supported scope.
 
 See [SPEC.md](SPEC.md), [PROJECT_STATE.md](PROJECT_STATE.md), and [docs/toolchain.md](docs/toolchain.md) for scope and current evidence.

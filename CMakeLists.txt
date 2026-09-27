@@ -10,6 +10,7 @@ set(CGJRE_PORTABLE_SOURCES
   src/archive/manifest.c
   src/vm/classfile.c
   src/vm/bytecode_scan.c
+  src/vm/interpreter.c
   third_party/miniz/miniz_tinfl.c
 )
 
@@ -19,6 +20,7 @@ if(CGJRE_HOST)
     ${CGJRE_PORTABLE_SOURCES}
     src/platform/host/main.c
     src/platform/host/inspect.c
+    src/platform/host/eval.c
   )
   target_include_directories(cgjre-host PRIVATE include)
   target_include_directories(cgjre-host PRIVATE third_party/miniz)
@@ -33,6 +35,8 @@ if(CGJRE_HOST)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_archive.py $<TARGET_FILE:cgjre-host>)
     add_test(NAME classfile COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_classfile.py $<TARGET_FILE:cgjre-host>)
+    add_test(NAME vm_int COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm_int.py $<TARGET_FILE:cgjre-host>)
   endif()
 else()
   include(GenerateG3A)

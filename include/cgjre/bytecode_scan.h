@@ -7,5 +7,8 @@
 /* Structural scan only. Counts instruction starts, not operand bytes. */
 int cgjre_bytecode_scan(const uint8_t *code, size_t length,
     uint32_t counts[256]);
+/* starts, when supplied, has length bytes and marks instruction boundaries. */
+int cgjre_bytecode_scan_starts(const uint8_t *code, size_t length,
+    uint32_t counts[256], uint8_t *starts);
 
 #endif

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — M2 in progress
+
+- Added a shared explicit-frame integer interpreter and a host class-method fixture runner.
+- Added 256 opcode coverage rows, integer semantic fixtures, and verification of a real ECJ 45.3 class file.
+
 ## Unreleased — M1 in progress
 
 - Added bounded ZIP central-directory indexing shared by host and calculator, with stored-entry extraction and CRC checks.

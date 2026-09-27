@@ -12,15 +12,17 @@ static int64_t signed32(uint32_t value)
     return value <= 0x7fffffffu ? value : (int64_t)value - 0x100000000ll;
 }
 
-int cgjre_bytecode_scan(const uint8_t *code, size_t length,
-    uint32_t counts[256])
+int cgjre_bytecode_scan_starts(const uint8_t *code, size_t length,
+    uint32_t counts[256], uint8_t *starts)
 {
     size_t pc = 0;
     if(!code || !counts) return -1;
     memset(counts, 0, 256 * sizeof(*counts));
+    if(starts) memset(starts, 0, length);
     while(pc < length) {
         uint8_t op = code[pc];
         size_t width = 1;
+        if(starts) starts[pc] = 1;
         ++counts[op];
         if(op == 0xaa || op == 0xab) {
             size_t cursor = (pc + 4u) & ~(size_t)3u;
@@ -78,4 +80,10 @@ int cgjre_bytecode_scan(const uint8_t *code, size_t length,
         pc += width;
     }
     return 0;
+}
+
+int cgjre_bytecode_scan(const uint8_t *code, size_t length,
+    uint32_t counts[256])
+{
+    return cgjre_bytecode_scan_starts(code, length, counts, NULL);
 }
