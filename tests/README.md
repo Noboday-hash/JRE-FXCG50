@@ -5,3 +5,5 @@ CTest runs the M0 smoke check and Python-generated ZIP, manifest, and class fixt
 The class fixtures also cover SourceFile and line metadata, opcode counting, switches, and malformed instruction lengths. Tests use independently constructed ZIP and class bytes rather than a game JAR. Hardware tests and an independent Java ME emulator run remain pending.
 
 The M2 integer VM fixtures construct class files independently of the interpreter and check arithmetic edge cases, branches, locals, stack faults, unsupported operations, and the step limit through `cgjre-host --eval-class`. A separate locally downloaded ECJ 3.26.0 class was compiled and evaluated as an additional manual check; the default CTest suite does not download that compiler.
+
+The integer fixtures also cover 46.0 class parsing, same-class static calls, recursion, missing and external members, callee faults, and the frame cap. The two user-supplied games are static compatibility probes only; the test suite does not execute or package them.

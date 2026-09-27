@@ -25,7 +25,7 @@ def utf8(value):
     return b"\x01" + u2(len(value)) + value
 
 
-def make_class(major=45, class_name=b"Example", descriptor=b"()V",
+def make_class(major=45, minor=3, class_name=b"Example", descriptor=b"()V",
                code=b"\x2a\xb7\x00\x09\xb1", exception=b"", extra_pool=b"",
                extra_slots=0, debug=False):
     pool = [
@@ -48,7 +48,7 @@ def make_class(major=45, class_name=b"Example", descriptor=b"()V",
                       u2(len(exception) // 8) + exception + u2(bool(debug)) + nested)
     method = (u2(1) + u2(5) + u2(6) + u2(1) +
               u2(7) + u4(len(code_attribute)) + code_attribute)
-    return (u4(0xCAFEBABE) + u2(3) + u2(major) + u2(10 + extra_slots) +
+    return (u4(0xCAFEBABE) + u2(minor) + u2(major) + u2(10 + extra_slots) +
             b"".join(pool) + extra_pool + u2(0x21) + u2(2) + u2(4) +
             u2(0) + u2(0) + u2(1) + method + class_attributes)
 
@@ -89,6 +89,12 @@ def main(executable):
         inspect(executable, folder, "debug", make_class(debug=True),
                 True, "line entries=1 first=42")
         inspect(executable, folder, "modern", make_class(major=50), False,
+                "unsupported class format")
+        inspect(executable, folder, "old_46",
+                make_class(major=46, minor=0), True,
+                "class version=46.0")
+        inspect(executable, folder, "bad_minor_46",
+                make_class(major=46, minor=3), False,
                 "unsupported class format")
         inspect(executable, folder, "bad_descriptor",
                 make_class(descriptor=b"(V)V"), False, "malformed class file")

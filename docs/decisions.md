@@ -14,4 +14,12 @@ Use [Eclipse ECJ 3.26.0](https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.26
 
 ## 2026-09-27 — Integer VM slot model
 
-Use 32-bit value bits plus an explicit kind per Java slot and bounded explicit frames. Reserve zero as the future null reference handle and adjacent tagged high/low slots for category-2 values. This prevents host pointer truncation and makes reference roots identifiable for later GC. The first executable slice accepts only static integer methods without class initialization, monitors, or exception tables; tests cover wraparound, signed division, branches, local slots, malformed code, and explicit unsupported results. Long values, calls, objects, and Java exception delivery remain pending.
+Use 32-bit value bits plus an explicit kind per Java slot and bounded explicit frames. Reserve zero as the future null reference handle and adjacent tagged high/low slots for category-2 values. This prevents host pointer truncation and makes reference roots identifiable for later GC. The first executable slice accepts only static integer methods without class initialization, monitors, or exception tables; tests cover wraparound, signed division, branches, local slots, malformed code, and explicit unsupported results. Long values, cross-class and virtual calls, objects, and Java exception delivery remain pending.
+
+## 2026-09-27 — Class format 46.0
+
+Gish Reloaded includes 28 class files with version 46.0. [Oracle's class-file version table](https://docs.oracle.com/javase/specs/jvms/se10/html/jvms-4.html) identifies 46.0 as Java 1.2 format. Accept exact 46.0 alongside 45.3 after a dedicated fixture and full static inspection of the local Gish JAR; retain rejection of other versions. This changes parsing only, not execution coverage or the CLDC verification claim.
+
+## 2026-09-27 — Farm Frenzy 2 compatibility extensions
+
+Use Farm Frenzy 2 as the first user-supplied old-phone MIDlet compatibility target. It statically references RMS saves and media Player APIs. With user approval, plan a small file-backed RMS subset and a silent media compatibility layer with no audio playback, using the exact referenced descriptors in `docs/api-matrix.csv`. These are named extensions to the original baseline scope, not implemented features yet. Test record persistence and media state/error behavior against the selected reference emulator before claiming game compatibility. The supplied game JARs remain local-only and must not be committed or redistributed.

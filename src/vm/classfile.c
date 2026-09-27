@@ -316,7 +316,8 @@ cgjre_class_status cgjre_classfile_parse(cgjre_classfile *out,
     r = (reader){bytes, 0, length};
     if(!u4(&r, &magic) || magic != 0xcafebabeu ||
        !u2(&r, &out->minor) || !u2(&r, &out->major)) goto fail;
-    if(out->major != 45 || out->minor != 3) {
+    if(!((out->major == 45 && out->minor == 3) ||
+         (out->major == 46 && out->minor == 0))) {
         status = CGJRE_CLASS_UNSUPPORTED; goto fail;
     }
     if(!u2(&r, &out->cp_count)) goto fail;

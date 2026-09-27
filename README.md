@@ -1,6 +1,6 @@
 # CGJRE
 
-CGJRE is an in-progress CLDC/MIDP subset compatibility runtime for the Casio fx-CG50. The calculator add-in currently displays a smoke screen and exits; it cannot launch JARs. The shared M1 code reads bounded stored and DEFLATE entries, manifests, and class format 45.3 metadata.
+CGJRE is an in-progress CLDC/MIDP subset compatibility runtime for the Casio fx-CG50, aimed at ordinary old-phone MIDlet JARs. The calculator add-in currently displays a smoke screen and exits; it cannot launch JARs. The shared core reads bounded stored and DEFLATE entries and class format 45.3/46.0 metadata. Farm Frenzy 2 is the first local compatibility probe; the supplied game JARs stay local-only and are not committed.
 
 ## Host smoke build
 

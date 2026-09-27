@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint16_t read_be16(const uint8_t *p)
+{
+    return ((uint16_t)p[0] << 8) | p[1];
+}
+
 int cgjre_host_eval_class(const char *path, const char *method,
     const char *descriptor, int argument_count, char **arguments)
 {
@@ -74,9 +79,35 @@ int cgjre_host_eval_class(const char *path, const char *method,
     cgjre_vm_result result = cgjre_vm_execute_int(&file, selected, values,
         (size_t)argument_count, 100000u);
     if(result.status != CGJRE_VM_OK) {
-        fprintf(stderr, "%s:%s%s pc=%u opcode=0x%02x: %s\n", path,
-            method, descriptor, result.pc, result.opcode,
+        char active_name[256], active_descriptor[256];
+        const char *shown_name = method, *shown_descriptor = descriptor;
+        if(result.method_index < file.method_count &&
+           cgjre_class_ascii(&file,
+               file.methods[result.method_index].name_index,
+               active_name, sizeof(active_name)) == CGJRE_CLASS_OK &&
+           cgjre_class_ascii(&file,
+               file.methods[result.method_index].descriptor_index,
+               active_descriptor, sizeof(active_descriptor)) == CGJRE_CLASS_OK) {
+            shown_name = active_name;
+            shown_descriptor = active_descriptor;
+        }
+        fprintf(stderr, "%s:%s%s pc=%u opcode=0x%02x: %s", path,
+            shown_name, shown_descriptor, result.pc, result.opcode,
             cgjre_vm_status_name(result.status));
+        if(result.cp_index && result.cp_index < file.cp_count &&
+           file.cp[result.cp_index].tag == 10) {
+            const uint8_t *reference = bytes + file.cp[result.cp_index].offset;
+            uint16_t name_type_index = read_be16(reference + 2);
+            const uint8_t *name_type = bytes + file.cp[name_type_index].offset;
+            char target_name[256], target_descriptor[256];
+            if(cgjre_class_ascii(&file, read_be16(name_type), target_name,
+               sizeof(target_name)) == CGJRE_CLASS_OK &&
+               cgjre_class_ascii(&file, read_be16(name_type + 2),
+               target_descriptor, sizeof(target_descriptor)) == CGJRE_CLASS_OK)
+                fprintf(stderr, " target=%s%s", target_name,
+                    target_descriptor);
+        }
+        fputc('\n', stderr);
         goto done;
     }
     printf("result=%d steps=%u\n", result.value, result.steps);

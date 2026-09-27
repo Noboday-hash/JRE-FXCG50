@@ -26,6 +26,7 @@ typedef enum {
     CGJRE_VM_BAD_INPUT,
     CGJRE_VM_INVALID_CODE,
     CGJRE_VM_UNSUPPORTED,
+    CGJRE_VM_MISSING_MEMBER,
     CGJRE_VM_DIVIDE_BY_ZERO,
     CGJRE_VM_LIMIT,
     CGJRE_VM_NOMEM
@@ -37,6 +38,8 @@ typedef struct {
     uint32_t steps;
     uint32_t pc;
     uint8_t opcode;
+    uint16_t method_index;
+    uint16_t cp_index;
 } cgjre_vm_result;
 
 /* M2 integer slice: static (I...)I methods without class initialization. */

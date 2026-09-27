@@ -7,6 +7,7 @@
 typedef struct {
     const cgjre_classfile *file;
     const cgjre_class_member *method;
+    uint16_t method_index;
     cgjre_vm_slot *locals;
     cgjre_vm_slot *stack;
     uint8_t *starts;
@@ -147,6 +148,82 @@ static int branch(cgjre_vm_frame *frame, int64_t offset)
     return 1;
 }
 
+static int same_utf8(const cgjre_classfile *file, uint16_t first,
+    uint16_t second)
+{
+    if(!first || !second || first >= file->cp_count ||
+       second >= file->cp_count || file->cp[first].tag != 1 ||
+       file->cp[second].tag != 1) return 0;
+    const cgjre_cp_entry *a = &file->cp[first], *b = &file->cp[second];
+    return a->length == b->length &&
+        memcmp(file->bytes + a->offset, file->bytes + b->offset,
+            a->length) == 0;
+}
+
+static cgjre_vm_status resolve_static_call(const cgjre_classfile *file,
+    uint16_t cp_index, uint16_t *method_index, size_t *argument_count)
+{
+    const cgjre_cp_entry *reference, *name_type;
+    const uint8_t *p;
+    uint16_t owner, name, descriptor;
+    if(!cp_index || cp_index >= file->cp_count ||
+       file->cp[cp_index].tag != 10) return CGJRE_VM_INVALID_CODE;
+    reference = &file->cp[cp_index];
+    p = file->bytes + reference->offset;
+    owner = read16(p);
+    if(owner != file->this_class) return CGJRE_VM_UNSUPPORTED;
+    name_type = &file->cp[read16(p + 2)];
+    p = file->bytes + name_type->offset;
+    name = read16(p);
+    descriptor = read16(p + 2);
+    for(uint16_t i = 0; i < file->method_count; ++i) {
+        const cgjre_class_member *method = &file->methods[i];
+        if(same_utf8(file, method->name_index, name) &&
+           same_utf8(file, method->descriptor_index, descriptor)) {
+            if(!(method->access_flags & 0x0008u) ||
+               (method->access_flags & 0x0520u) ||
+               method->exception_count || !method->code_length ||
+               !method_arguments(file, method, argument_count))
+                return CGJRE_VM_UNSUPPORTED;
+            *method_index = i;
+            return CGJRE_VM_OK;
+        }
+    }
+    return CGJRE_VM_MISSING_MEMBER;
+}
+
+static cgjre_vm_status initialize_frame(cgjre_vm_frame *frame,
+    const cgjre_classfile *file, uint16_t method_index)
+{
+    const cgjre_class_member *method = &file->methods[method_index];
+    uint32_t counts[256];
+    frame->file = file;
+    frame->method = method;
+    frame->method_index = method_index;
+    if(method->max_stack > CGJRE_VM_MAX_SLOTS ||
+       method->max_locals > CGJRE_VM_MAX_SLOTS)
+        return CGJRE_VM_LIMIT;
+    frame->locals = calloc(method->max_locals ? method->max_locals : 1u,
+        sizeof(*frame->locals));
+    frame->stack = calloc(method->max_stack ? method->max_stack : 1u,
+        sizeof(*frame->stack));
+    frame->starts = malloc(method->code_length);
+    if(!frame->locals || !frame->stack || !frame->starts)
+        return CGJRE_VM_NOMEM;
+    if(cgjre_bytecode_scan_starts(file->bytes + method->code_offset,
+       method->code_length, counts, frame->starts) != 0)
+        return CGJRE_VM_INVALID_CODE;
+    return CGJRE_VM_OK;
+}
+
+static void destroy_frame(cgjre_vm_frame *frame)
+{
+    free(frame->starts);
+    free(frame->stack);
+    free(frame->locals);
+    memset(frame, 0, sizeof(*frame));
+}
+
 const char *cgjre_vm_status_name(cgjre_vm_status status)
 {
     switch(status) {
@@ -154,6 +231,7 @@ const char *cgjre_vm_status_name(cgjre_vm_status status)
     case CGJRE_VM_BAD_INPUT: return "invalid VM request";
     case CGJRE_VM_INVALID_CODE: return "invalid bytecode or stack state";
     case CGJRE_VM_UNSUPPORTED: return "unsupported VM feature";
+    case CGJRE_VM_MISSING_MEMBER: return "missing method member";
     case CGJRE_VM_DIVIDE_BY_ZERO: return "integer division by zero";
     case CGJRE_VM_LIMIT: return "VM execution limit reached";
     case CGJRE_VM_NOMEM: return "out of memory";
@@ -165,12 +243,12 @@ cgjre_vm_result cgjre_vm_execute_int(const cgjre_classfile *file,
     uint16_t method_index, const int32_t *arguments, size_t argument_count,
     uint32_t step_limit)
 {
-    cgjre_vm_result result = {CGJRE_VM_BAD_INPUT, 0, 0, 0, 0};
+    cgjre_vm_result result = {.status = CGJRE_VM_BAD_INPUT,
+        .method_index = method_index};
     cgjre_vm_context context = {0};
     cgjre_vm_frame *frame = &context.frames[0];
     const cgjre_class_member *method;
     const uint8_t *code;
-    uint32_t opcode_counts[256];
     size_t expected_arguments;
     if(!file || method_index >= file->method_count ||
        (!arguments && argument_count) || !step_limit) return result;
@@ -184,36 +262,24 @@ cgjre_vm_result cgjre_vm_execute_int(const cgjre_classfile *file,
         result.status = CGJRE_VM_UNSUPPORTED;
         return result;
     }
-    if(method->max_stack > CGJRE_VM_MAX_SLOTS ||
-       method->max_locals > CGJRE_VM_MAX_SLOTS ||
-       argument_count > method->max_locals) {
-        result.status = CGJRE_VM_LIMIT;
+    if(argument_count > method->max_locals) {
+        result.status = CGJRE_VM_INVALID_CODE;
         return result;
     }
     context.depth = 1;
-    frame->file = file;
-    frame->method = method;
-    frame->locals = calloc(method->max_locals ? method->max_locals : 1u,
-        sizeof(*frame->locals));
-    frame->stack = calloc(method->max_stack ? method->max_stack : 1u,
-        sizeof(*frame->stack));
-    frame->starts = malloc(method->code_length);
-    if(!frame->locals || !frame->stack || !frame->starts) {
-        result.status = CGJRE_VM_NOMEM;
-        goto done;
-    }
-    code = file->bytes + method->code_offset;
-    if(cgjre_bytecode_scan_starts(code, method->code_length,
-       opcode_counts, frame->starts) != 0) {
-        result.status = CGJRE_VM_INVALID_CODE;
-        goto done;
-    }
+    result.status = initialize_frame(frame, file, method_index);
+    if(result.status != CGJRE_VM_OK) goto done;
     for(size_t i = 0; i < argument_count; ++i)
         frame->locals[i] = (cgjre_vm_slot){as_bits(arguments[i]), CGJRE_SLOT_INT};
     for(;;) {
         uint8_t op;
         uint32_t a, b;
         uint32_t next;
+        frame = &context.frames[context.depth - 1u];
+        method = frame->method;
+        code = file->bytes + method->code_offset;
+        result.method_index = frame->method_index;
+        result.cp_index = 0;
         if(frame->pc >= method->code_length || !frame->starts[frame->pc]) {
             result.status = CGJRE_VM_INVALID_CODE;
             goto done;
@@ -371,9 +437,58 @@ cgjre_vm_result cgjre_vm_execute_int(const cgjre_classfile *file,
             continue;
         case 0xac:
             if(frame->sp != 1 || !pop_int(frame, &a)) INVALID();
-            result.value = as_signed(a);
-            result.status = CGJRE_VM_OK;
-            goto done;
+            if(context.depth == 1) {
+                result.value = as_signed(a);
+                result.status = CGJRE_VM_OK;
+                goto done;
+            }
+            destroy_frame(frame);
+            --context.depth;
+            frame = &context.frames[context.depth - 1u];
+            if(!push_int(frame, a)) {
+                result.method_index = frame->method_index;
+                result.pc = frame->pc;
+                result.opcode = 0xb8;
+                INVALID();
+            }
+            continue;
+        case 0xb8: {
+            uint16_t index = read16(code + frame->pc + 1);
+            uint16_t callee_index;
+            size_t callee_arguments;
+            cgjre_vm_status status = resolve_static_call(file, index,
+                &callee_index, &callee_arguments);
+            result.cp_index = index;
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            if(context.depth >= CGJRE_VM_MAX_FRAMES) {
+                result.status = CGJRE_VM_LIMIT;
+                goto done;
+            }
+            if(callee_arguments > frame->sp ||
+               callee_arguments > file->methods[callee_index].max_locals)
+                INVALID();
+            for(size_t i = 0; i < callee_arguments; ++i)
+                if(frame->stack[frame->sp - callee_arguments + i].kind !=
+                   CGJRE_SLOT_INT) INVALID();
+            cgjre_vm_frame *callee = &context.frames[context.depth++];
+            status = initialize_frame(callee, file, callee_index);
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            for(size_t i = 0; i < callee_arguments; ++i) {
+                callee->locals[i] =
+                    frame->stack[frame->sp - callee_arguments + i];
+                frame->stack[frame->sp - callee_arguments + i].kind =
+                    CGJRE_SLOT_EMPTY;
+            }
+            frame->sp -= (uint32_t)callee_arguments;
+            frame->pc += 3;
+            continue;
+        }
         case 0xc4: {
             uint8_t nested = code[frame->pc + 1];
             unsigned index = read16(code + frame->pc + 2);
@@ -408,8 +523,7 @@ cgjre_vm_result cgjre_vm_execute_int(const cgjre_classfile *file,
 #undef INVALID
     }
 done:
-    free(frame->starts);
-    free(frame->stack);
-    free(frame->locals);
+    while(context.depth)
+        destroy_frame(&context.frames[--context.depth]);
     return result;
 }

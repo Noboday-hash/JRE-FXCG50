@@ -2,6 +2,7 @@
 /build-host/
 /dist/
 /CGJRE.g3a
+/samples/*.jar
 *.map
 *.bin
 __pycache__/

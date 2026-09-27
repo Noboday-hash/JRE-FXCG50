@@ -21,7 +21,8 @@ def utf8(value):
 
 
 def make_class(code, descriptor="()I", max_stack=4, max_locals=4,
-               constant=None, static=True, synchronized=False, exception=b""):
+               constant=None, static=True, synchronized=False, exception=b"",
+               major=45, minor=3):
     pool = [utf8("Arithmetic"), b"\x07" + u2(1),
             utf8("java/lang/Object"), b"\x07" + u2(3),
             utf8("test"), utf8(descriptor), utf8("Code")]
@@ -32,9 +33,32 @@ def make_class(code, descriptor="()I", max_stack=4, max_locals=4,
     flags = (0x0009 if static else 0x0001) | (0x0020 if synchronized else 0)
     method = (u2(flags) + u2(5) + u2(6) +
               u2(1) + u2(7) + u4(len(code_attribute)) + code_attribute)
-    return (u4(0xCAFEBABE) + u2(3) + u2(45) + u2(len(pool) + 1) +
+    return (u4(0xCAFEBABE) + u2(minor) + u2(major) + u2(len(pool) + 1) +
             b"".join(pool) + u2(0x0021) + u2(2) + u2(4) +
             u2(0) + u2(0) + u2(1) + method + u2(0))
+
+
+def make_call_class(test_code, helper_code=None, test_descriptor="()I",
+                    helper_descriptor="()I", reference_name="helper",
+                    reference_owner=2, test_stack=4):
+    pool = [utf8("Arithmetic"), b"\x07" + u2(1),
+            utf8("java/lang/Object"), b"\x07" + u2(3),
+            utf8("test"), utf8(test_descriptor), utf8("Code"),
+            utf8(reference_name), utf8(helper_descriptor),
+            b"\x0c" + u2(8) + u2(9),
+            b"\x0a" + u2(reference_owner) + u2(10)]
+
+    def method(name_index, descriptor_index, code, stack):
+        body = u2(stack) + u2(4) + u4(len(code)) + code + u2(0) + u2(0)
+        return u2(0x0009) + u2(name_index) + u2(descriptor_index) + u2(1) + \
+            u2(7) + u4(len(body)) + body
+
+    methods = [method(5, 6, test_code, test_stack)]
+    if helper_code is not None:
+        methods.append(method(8, 9, helper_code, 4))
+    return (u4(0xCAFEBABE) + u2(3) + u2(45) + u2(len(pool) + 1) +
+            b"".join(pool) + u2(0x0021) + u2(2) + u2(4) +
+            u2(0) + u2(0) + u2(len(methods)) + b"".join(methods) + u2(0))
 
 
 def check(executable, folder, label, code, expected, descriptor="()I",
@@ -51,10 +75,26 @@ def check(executable, folder, label, code, expected, descriptor="()I",
         raise AssertionError(f"{label}: {run.returncode}\n{run.stdout}\n{run.stderr}")
 
 
+def check_call(executable, folder, label, class_bytes, expected,
+               descriptor="()I", arguments=()):
+    path = folder / (label + ".class")
+    path.write_bytes(class_bytes)
+    command = [executable, "--eval-class", str(path), "test", descriptor]
+    command.extend(str(value) for value in arguments)
+    run = subprocess.run(command, capture_output=True, text=True, check=False)
+    if isinstance(expected, int):
+        if run.returncode != 0 or f"result={expected} " not in run.stdout:
+            raise AssertionError(f"{label}: {run.returncode}\n{run.stdout}\n{run.stderr}")
+    elif run.returncode == 0 or expected not in run.stderr:
+        raise AssertionError(f"{label}: {run.returncode}\n{run.stdout}\n{run.stderr}")
+
+
 def main(executable):
     with tempfile.TemporaryDirectory() as directory:
         folder = pathlib.Path(directory)
         check(executable, folder, "add", b"\x05\x06\x60\xac", 5)
+        check(executable, folder, "old_46_integer",
+              b"\x05\x06\x60\xac", 5, major=46, minor=0)
         check(executable, folder, "args_multiply", b"\x1a\x1b\x68\xac",
               -21, descriptor="(II)I", arguments=(7, -3))
         check(executable, folder, "subtract", b"\x07\x05\x64\xac", 2)
@@ -159,6 +199,45 @@ def main(executable):
               exception=u2(0) + u2(1) + u2(1) + u2(0))
         check(executable, folder, "busy_loop",
               b"\xa7\x00\x00", "VM execution limit reached")
+        check_call(executable, folder, "same_class_call",
+                   make_call_class(b"\xb8\x00\x0b\xac",
+                                   b"\x08\xac"), 5)
+        check_call(executable, folder, "missing_call",
+                   make_call_class(b"\xb8\x00\x0b\xac",
+                                   reference_name="missing"),
+                   "missing method member target=missing()I")
+        check_call(executable, folder, "external_call",
+                   make_call_class(b"\xb8\x00\x0b\xac",
+                                   reference_owner=4),
+                   "unsupported VM feature")
+        check_call(executable, folder, "call_arguments",
+                   make_call_class(b"\x1a\xb8\x00\x0b\xac",
+                                   b"\x1a\x04\x60\xac",
+                                   test_descriptor="(I)I",
+                                   helper_descriptor="(I)I"),
+                   42, descriptor="(I)I", arguments=(41,))
+        check_call(executable, folder, "call_underflow",
+                   make_call_class(b"\xb8\x00\x0b\xac",
+                                   b"\x1a\xac",
+                                   helper_descriptor="(I)I"),
+                   "invalid bytecode or stack state")
+        check_call(executable, folder, "callee_fault",
+                   make_call_class(b"\xb8\x00\x0b\xac",
+                                   b"\x04\x03\x6c\xac"),
+                   "helper()I pc=2 opcode=0x6c: integer division by zero")
+        recursive = (b"\x1a\x99\x00\x0c\x1a\x04\x64\xb8\x00\x0b"
+                     b"\x04\x60\xac\x03\xac")
+        check_call(executable, folder, "recursive",
+                   make_call_class(recursive, test_descriptor="(I)I",
+                                   helper_descriptor="(I)I",
+                                   reference_name="test"),
+                   5, descriptor="(I)I", arguments=(5,))
+        check_call(executable, folder, "frame_limit",
+                   make_call_class(recursive, test_descriptor="(I)I",
+                                   helper_descriptor="(I)I",
+                                   reference_name="test"),
+                   "VM execution limit reached", descriptor="(I)I",
+                   arguments=(40,))
     print("integer VM fixtures passed")
 
 
