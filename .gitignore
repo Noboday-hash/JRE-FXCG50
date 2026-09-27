@@ -1,0 +1,7 @@
+/build-cg/
+/build-host/
+/dist/
+/CGJRE.g3a
+*.map
+*.bin
+__pycache__/
