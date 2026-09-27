@@ -9,6 +9,7 @@
 - Added an owned JAR class cache and cross-class static integer calls through a resolver callback.
 - Added bounded primitive-array handles and reference bytecodes for static integer fixtures.
 - Added direct-Object instances, constructor frames, and checked integer/reference field access.
+- Added inherited instance fields and constructor chains, virtual integer dispatch, reference arrays, and supported casts.
 
 ## Unreleased — M1 in progress
 
