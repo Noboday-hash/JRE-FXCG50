@@ -16,8 +16,18 @@ typedef struct {
 } cgjre_vm_frame;
 
 typedef struct {
+    uint32_t length;
+    uint8_t atype;
+    void *data;
+    size_t payload_bytes;
+} cgjre_vm_array;
+
+typedef struct {
     cgjre_vm_frame frames[CGJRE_VM_MAX_FRAMES];
     unsigned depth;
+    cgjre_vm_array *handles[CGJRE_VM_MAX_HANDLES];
+    uint16_t handle_count;
+    size_t array_bytes;
 } cgjre_vm_context;
 
 static uint16_t read16(const uint8_t *p)
@@ -62,10 +72,34 @@ static uint32_t arithmetic_shift(uint32_t bits, unsigned count)
         shifted | ~(UINT32_MAX >> count) : shifted;
 }
 
-static int push_int(cgjre_vm_frame *frame, uint32_t bits)
+static int category_one(cgjre_slot_kind kind)
+{
+    return kind == CGJRE_SLOT_INT || kind == CGJRE_SLOT_REFERENCE;
+}
+
+static int push_slot(cgjre_vm_frame *frame, cgjre_vm_slot slot)
 {
     if(frame->sp >= frame->method->max_stack) return 0;
-    frame->stack[frame->sp++] = (cgjre_vm_slot){bits, CGJRE_SLOT_INT};
+    frame->stack[frame->sp++] = slot;
+    return 1;
+}
+
+static int push_int(cgjre_vm_frame *frame, uint32_t bits)
+{
+    return push_slot(frame, (cgjre_vm_slot){bits, CGJRE_SLOT_INT});
+}
+
+static int push_ref(cgjre_vm_frame *frame, uint32_t handle)
+{
+    return push_slot(frame, (cgjre_vm_slot){handle, CGJRE_SLOT_REFERENCE});
+}
+
+static int pop_category_one(cgjre_vm_frame *frame, cgjre_vm_slot *slot)
+{
+    if(!frame->sp || !category_one(frame->stack[frame->sp - 1].kind))
+        return 0;
+    *slot = frame->stack[--frame->sp];
+    frame->stack[frame->sp].kind = CGJRE_SLOT_EMPTY;
     return 1;
 }
 
@@ -78,11 +112,28 @@ static int pop_int(cgjre_vm_frame *frame, uint32_t *bits)
     return 1;
 }
 
+static int pop_ref(cgjre_vm_frame *frame, uint32_t *handle)
+{
+    if(!frame->sp ||
+       frame->stack[frame->sp - 1].kind != CGJRE_SLOT_REFERENCE)
+        return 0;
+    *handle = frame->stack[--frame->sp].bits;
+    frame->stack[frame->sp].kind = CGJRE_SLOT_EMPTY;
+    return 1;
+}
+
 static int load_int(cgjre_vm_frame *frame, unsigned index)
 {
     return index < frame->method->max_locals &&
         frame->locals[index].kind == CGJRE_SLOT_INT &&
         push_int(frame, frame->locals[index].bits);
+}
+
+static int load_ref(cgjre_vm_frame *frame, unsigned index)
+{
+    return index < frame->method->max_locals &&
+        frame->locals[index].kind == CGJRE_SLOT_REFERENCE &&
+        push_ref(frame, frame->locals[index].bits);
 }
 
 static int store_int(cgjre_vm_frame *frame, unsigned index)
@@ -92,6 +143,60 @@ static int store_int(cgjre_vm_frame *frame, unsigned index)
         return 0;
     frame->locals[index] = (cgjre_vm_slot){bits, CGJRE_SLOT_INT};
     return 1;
+}
+
+static int store_ref(cgjre_vm_frame *frame, unsigned index)
+{
+    uint32_t handle;
+    if(index >= frame->method->max_locals || !pop_ref(frame, &handle))
+        return 0;
+    frame->locals[index] =
+        (cgjre_vm_slot){handle, CGJRE_SLOT_REFERENCE};
+    return 1;
+}
+
+static cgjre_vm_status allocate_array(cgjre_vm_context *context,
+    uint8_t atype, uint32_t length, uint32_t *handle)
+{
+    cgjre_vm_array *array;
+    size_t width, bytes;
+    if(atype != 4 && atype != 5 && atype != 8 &&
+       atype != 9 && atype != 10)
+        return CGJRE_VM_UNSUPPORTED;
+    if(length > CGJRE_VM_MAX_ARRAY_LENGTH ||
+       context->handle_count + 1u >= CGJRE_VM_MAX_HANDLES)
+        return CGJRE_VM_LIMIT;
+    width = atype == 10 ? sizeof(uint32_t) :
+        ((atype == 5 || atype == 9) ? sizeof(uint16_t) : sizeof(uint8_t));
+    bytes = (size_t)length * width;
+    if(bytes > CGJRE_VM_ARRAY_BUDGET_BYTES - context->array_bytes)
+        return CGJRE_VM_LIMIT;
+    array = calloc(1, sizeof(*array));
+    if(!array) return CGJRE_VM_NOMEM;
+    array->data = calloc(bytes ? bytes : 1u, 1);
+    if(!array->data) { free(array); return CGJRE_VM_NOMEM; }
+    array->length = length;
+    array->atype = atype;
+    array->payload_bytes = bytes;
+    context->array_bytes += bytes;
+    *handle = ++context->handle_count;
+    context->handles[*handle] = array;
+    return CGJRE_VM_OK;
+}
+
+static cgjre_vm_array *get_array(cgjre_vm_context *context,
+    uint32_t handle)
+{
+    return handle > 0 && handle <= context->handle_count ?
+        context->handles[handle] : NULL;
+}
+
+static void free_arrays(cgjre_vm_context *context)
+{
+    for(uint16_t i = 1; i <= context->handle_count; ++i) {
+        free(context->handles[i]->data);
+        free(context->handles[i]);
+    }
 }
 
 static int increment(cgjre_vm_frame *frame, unsigned index, int32_t amount)
@@ -251,6 +356,9 @@ const char *cgjre_vm_status_name(cgjre_vm_status status)
     case CGJRE_VM_MISSING_CLASS: return "missing class";
     case CGJRE_VM_CLASS_LOAD_ERROR: return "class loading error";
     case CGJRE_VM_DIVIDE_BY_ZERO: return "integer division by zero";
+    case CGJRE_VM_NULL_REFERENCE: return "null array reference";
+    case CGJRE_VM_ARRAY_BOUNDS: return "array index out of bounds";
+    case CGJRE_VM_NEGATIVE_ARRAY_SIZE: return "negative array size";
     case CGJRE_VM_LIMIT: return "VM execution limit reached";
     case CGJRE_VM_NOMEM: return "out of memory";
     }
@@ -326,6 +434,9 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
 #define INVALID() do { result.status = CGJRE_VM_INVALID_CODE; goto done; } while(0)
         switch(op) {
         case 0x00: break;
+        case 0x01:
+            if(!push_ref(frame, 0)) INVALID();
+            break;
         case 0x02: case 0x03: case 0x04: case 0x05:
         case 0x06: case 0x07: case 0x08:
             if(!push_int(frame, as_bits((int32_t)op - 3))) INVALID();
@@ -359,29 +470,97 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
             if(!load_int(frame, code[frame->pc + 1])) INVALID();
             next += 1;
             break;
+        case 0x19:
+            if(!load_ref(frame, code[frame->pc + 1])) INVALID();
+            next += 1;
+            break;
         case 0x1a: case 0x1b: case 0x1c: case 0x1d:
             if(!load_int(frame, op - 0x1a)) INVALID();
             break;
+        case 0x2a: case 0x2b: case 0x2c: case 0x2d:
+            if(!load_ref(frame, op - 0x2a)) INVALID();
+            break;
+        case 0x2e: case 0x33: case 0x34: case 0x35: {
+            cgjre_vm_array *array;
+            if(!pop_int(frame, &b) || !pop_ref(frame, &a)) INVALID();
+            if(!a) { result.status = CGJRE_VM_NULL_REFERENCE; goto done; }
+            array = get_array(&context, a);
+            if(!array || (op == 0x2e && array->atype != 10) ||
+               (op == 0x33 && array->atype != 4 && array->atype != 8) ||
+               (op == 0x34 && array->atype != 5) ||
+               (op == 0x35 && array->atype != 9))
+                INVALID();
+            int32_t index = as_signed(b);
+            if(index < 0 || (uint32_t)index >= array->length) {
+                result.status = CGJRE_VM_ARRAY_BOUNDS;
+                goto done;
+            }
+            uint32_t value;
+            if(op == 0x2e) value = ((uint32_t *)array->data)[index];
+            else if(op == 0x33)
+                value = as_bits(signed_byte(((uint8_t *)array->data)[index]));
+            else if(op == 0x34)
+                value = ((uint16_t *)array->data)[index];
+            else value = as_bits(signed_short(
+                ((uint16_t *)array->data)[index]));
+            if(!push_int(frame, value)) INVALID();
+            break;
+        }
         case 0x36:
             if(!store_int(frame, code[frame->pc + 1])) INVALID();
+            next += 1;
+            break;
+        case 0x3a:
+            if(!store_ref(frame, code[frame->pc + 1])) INVALID();
             next += 1;
             break;
         case 0x3b: case 0x3c: case 0x3d: case 0x3e:
             if(!store_int(frame, op - 0x3b)) INVALID();
             break;
+        case 0x4b: case 0x4c: case 0x4d: case 0x4e:
+            if(!store_ref(frame, op - 0x4b)) INVALID();
+            break;
+        case 0x4f: case 0x54: case 0x55: case 0x56: {
+            cgjre_vm_array *array;
+            uint32_t value;
+            if(!pop_int(frame, &value) || !pop_int(frame, &b) ||
+               !pop_ref(frame, &a)) INVALID();
+            if(!a) { result.status = CGJRE_VM_NULL_REFERENCE; goto done; }
+            array = get_array(&context, a);
+            if(!array || (op == 0x4f && array->atype != 10) ||
+               (op == 0x54 && array->atype != 4 && array->atype != 8) ||
+               (op == 0x55 && array->atype != 5) ||
+               (op == 0x56 && array->atype != 9))
+                INVALID();
+            int32_t index = as_signed(b);
+            if(index < 0 || (uint32_t)index >= array->length) {
+                result.status = CGJRE_VM_ARRAY_BOUNDS;
+                goto done;
+            }
+            if(op == 0x4f) ((uint32_t *)array->data)[index] = value;
+            else if(op == 0x54)
+                ((uint8_t *)array->data)[index] = (uint8_t)value;
+            else ((uint16_t *)array->data)[index] = (uint16_t)value;
+            break;
+        }
         case 0x57:
-            if(!pop_int(frame, &a)) INVALID();
+            {
+                cgjre_vm_slot discarded;
+                if(!pop_category_one(frame, &discarded)) INVALID();
+            }
             break;
         case 0x59:
-            if(!frame->sp || frame->stack[frame->sp - 1].kind != CGJRE_SLOT_INT ||
-               !push_int(frame, frame->stack[frame->sp - 1].bits)) INVALID();
+            if(!frame->sp ||
+               !category_one(frame->stack[frame->sp - 1].kind) ||
+               !push_slot(frame, frame->stack[frame->sp - 1])) INVALID();
             break;
         case 0x5f:
-            if(frame->sp < 2 || frame->stack[frame->sp - 1].kind != CGJRE_SLOT_INT ||
-               frame->stack[frame->sp - 2].kind != CGJRE_SLOT_INT) INVALID();
-            a = frame->stack[frame->sp - 1].bits;
-            frame->stack[frame->sp - 1].bits = frame->stack[frame->sp - 2].bits;
-            frame->stack[frame->sp - 2].bits = a;
+            if(frame->sp < 2 ||
+               !category_one(frame->stack[frame->sp - 1].kind) ||
+               !category_one(frame->stack[frame->sp - 2].kind)) INVALID();
+            cgjre_vm_slot slot = frame->stack[frame->sp - 1];
+            frame->stack[frame->sp - 1] = frame->stack[frame->sp - 2];
+            frame->stack[frame->sp - 2] = slot;
             break;
         case 0x60: case 0x64: case 0x68: case 0x6c: case 0x70:
         case 0x78: case 0x7a: case 0x7c: case 0x7e: case 0x80: case 0x82:
@@ -467,6 +646,15 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
             if(!branch(frame, signed_short(read16(code + frame->pc + 1))))
                 INVALID();
             continue;
+        case 0xa5: case 0xa6:
+            if(!pop_ref(frame, &b) || !pop_ref(frame, &a)) INVALID();
+            if((op == 0xa5 && a == b) || (op == 0xa6 && a != b)) {
+                if(!branch(frame, signed_short(read16(code + frame->pc + 1))))
+                    INVALID();
+                continue;
+            }
+            next += 2;
+            break;
         case 0xac:
             if(frame->sp != 1 || !pop_int(frame, &a)) INVALID();
             if(context.depth == 1) {
@@ -524,6 +712,37 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
             frame->pc += 3;
             continue;
         }
+        case 0xbc: {
+            uint32_t handle;
+            cgjre_vm_status status;
+            uint8_t atype = code[frame->pc + 1];
+            if(atype != 4 && atype != 5 && atype != 8 &&
+               atype != 9 && atype != 10) {
+                result.status = CGJRE_VM_UNSUPPORTED;
+                goto done;
+            }
+            if(!pop_int(frame, &a)) INVALID();
+            if(as_signed(a) < 0) {
+                result.status = CGJRE_VM_NEGATIVE_ARRAY_SIZE;
+                goto done;
+            }
+            status = allocate_array(&context, atype, a, &handle);
+            if(status != CGJRE_VM_OK) {
+                result.status = status;
+                goto done;
+            }
+            if(!push_ref(frame, handle)) INVALID();
+            next += 1;
+            break;
+        }
+        case 0xbe: {
+            cgjre_vm_array *array;
+            if(!pop_ref(frame, &a)) INVALID();
+            if(!a) { result.status = CGJRE_VM_NULL_REFERENCE; goto done; }
+            array = get_array(&context, a);
+            if(!array || !push_int(frame, array->length)) INVALID();
+            break;
+        }
         case 0xc4: {
             uint8_t nested = code[frame->pc + 1];
             unsigned index = read16(code + frame->pc + 2);
@@ -531,8 +750,16 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
                 if(!load_int(frame, index)) INVALID();
                 next += 3;
             }
+            else if(nested == 0x19) {
+                if(!load_ref(frame, index)) INVALID();
+                next += 3;
+            }
             else if(nested == 0x36) {
                 if(!store_int(frame, index)) INVALID();
+                next += 3;
+            }
+            else if(nested == 0x3a) {
+                if(!store_ref(frame, index)) INVALID();
                 next += 3;
             }
             else if(nested == 0x84) {
@@ -550,6 +777,15 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
             if(!branch(frame, signed_offset)) INVALID();
             continue;
         }
+        case 0xc6: case 0xc7:
+            if(!pop_ref(frame, &a)) INVALID();
+            if((op == 0xc6 && a == 0) || (op == 0xc7 && a != 0)) {
+                if(!branch(frame, signed_short(read16(code + frame->pc + 1))))
+                    INVALID();
+                continue;
+            }
+            next += 2;
+            break;
         default:
             result.status = CGJRE_VM_UNSUPPORTED;
             goto done;
@@ -560,5 +796,6 @@ cgjre_vm_result cgjre_vm_execute_int_resolved(const cgjre_classfile *file,
 done:
     while(context.depth)
         destroy_frame(&context.frames[--context.depth]);
+    free_arrays(&context);
     return result;
 }

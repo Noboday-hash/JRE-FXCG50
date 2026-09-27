@@ -9,3 +9,5 @@ The M2 integer VM fixtures construct class files independently of the interprete
 The integer fixtures also cover 46.0 class parsing, same-class static calls, recursion, missing and external members, callee faults, and the frame cap. The two user-supplied games are static compatibility probes only; the test suite does not execute or package them.
 
 `test_vm_jar.py` builds external stored and compressed two-class JARs and checks cross-class calls, cache reuse, missing classes/members, class-name mismatch, platform-package protection, the class-size limit, and unsupported initialization. A separate ECJ 3.26.0 two-class JAR was compiled and evaluated manually; it is not required by CTest.
+
+`test_vm_arrays.py` checks primitive arrays, reference locals and branches, zero initialization, sign extension, null/bounds/negative-size failures, and allocation limits. It also executes an array method from an external JAR. An ECJ 3.26.0 class with a real `int[]` store/load returned 41 for input 41; that compiler is still optional for the default test suite.

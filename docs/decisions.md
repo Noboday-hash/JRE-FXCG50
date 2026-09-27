@@ -27,3 +27,7 @@ Use Farm Frenzy 2 as the first user-supplied old-phone MIDlet compatibility targ
 ## 2026-09-27 — JAR class ownership and resolution
 
 Use an on-demand class repository backed by the bounded ZIP reader. It owns class bytes and metadata for the suite lifetime, caches up to 128 classes, validates requested internal names, and rejects application classes in `java/` or `javax/`. The VM resolves cross-class `invokestatic` through an injected callback, preserving the shared host/calculator core. Compatibility effect: static integer calls across ordinary external JAR classes can execute; initialization, inherited lookup, objects, and MIDlet launch remain unsupported. Tests: stored and compressed two-class JARs, repeated resolution, missing/mismatched/protected classes, size limit, and a real ECJ-built two-class JAR.
+
+## 2026-09-27 — Primitive-array handle slice
+
+Use numbered 32-bit handles for VM arrays, with null at zero and explicit reference slot tags. Bound the temporary fixture heap to 255 handles, 16,384 elements per array, and 256 KiB of payloads; release allocations when the run ends. This is a portable stepping stone for object handles and GC, not a measured calculator heap. Compatibility effect: boolean, byte, char, short, and int arrays, reference locals, reference comparison, and null/bounds/negative-size diagnostics work within static integer methods. Java exception objects, array reference covariance, long/float arrays, and GC remain pending. Tests: independent class and JAR fixtures, real ECJ int-array method, sanitizer and SH builds.

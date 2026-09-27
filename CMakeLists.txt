@@ -40,6 +40,8 @@ if(CGJRE_HOST)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm_int.py $<TARGET_FILE:cgjre-host>)
     add_test(NAME vm_jar COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm_jar.py $<TARGET_FILE:cgjre-host>)
+    add_test(NAME vm_arrays COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vm_arrays.py $<TARGET_FILE:cgjre-host>)
   endif()
 else()
   include(GenerateG3A)

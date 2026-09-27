@@ -50,11 +50,11 @@ def caller(owner="Helper", twice=False):
 
 
 def helper(name="Helper", method_name="value", clinit=False, major=45,
-           minor=3):
+           minor=3, code=b"\x08\xac"):
     pool = [utf8(name), b"\x07" + u2(1),
             utf8("java/lang/Object"), b"\x07" + u2(3),
             utf8(method_name), utf8("()I"), utf8("Code")]
-    methods = [method(5, 6, b"\x08\xac")]
+    methods = [method(5, 6, code)]
     if clinit:
         pool.extend([utf8("<clinit>"), utf8("()V")])
         methods.append(method(8, 9, b"\xb1"))
@@ -104,6 +104,10 @@ def main(executable):
         check(executable, folder, "cached",
               {"Caller.class": caller(twice=True),
                "Helper.class": helper()}, 10)
+        check(executable, folder, "array_in_callee",
+              {"Caller.class": caller(),
+               "Helper.class": helper(code=b"\x04\xbc\x0a\xbe\xac")},
+              1)
         check(executable, folder, "old_46_helper",
               {"Caller.class": caller(),
                "Helper.class": helper(major=46, minor=0)}, 5)
