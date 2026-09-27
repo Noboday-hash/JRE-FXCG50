@@ -1,8 +1,10 @@
 # Project state — 2026-09-27
 
+Risk summary: DEFLATE extraction on diverse JARs, class-file parsing beyond controlled fixtures, and the unimplemented bytecode VM are the three largest unresolved scope risks.
+
 ## Current milestone
 
-M1 host gate passes on controlled fixtures: the portable reader indexes bounded ZIP/JAR files, extracts stored and raw DEFLATE entries with length and CRC checks, parses the main manifest and MIDlet declarations, and parses class format 45.3 metadata. The host inspector reports sizes, versions, opcode usage, native declarations, static member references, and selected likely incompatibilities. Malformed archive, manifest, class, and bytecode fixtures fail explicitly. M0 calculator smoke build still lacks hardware execution evidence. M2 VM execution is not started.
+M1 host gate passes on controlled fixtures: the portable reader indexes bounded ZIP/JAR files, extracts stored and raw DEFLATE entries with length and CRC checks, parses the main manifest and MIDlet declarations, and parses class format 45.3 metadata. The host inspector reports sizes, versions, opcode usage, native declarations, static member references, and selected likely incompatibilities. Malformed archive, manifest, class, and bytecode fixtures fail explicitly. M2 VM execution is not started.
 
 ## Coverage
 
@@ -10,13 +12,13 @@ Executable Java opcode coverage: none. The M1 bytecode scanner counts instructio
 
 ## Toolchain and dependencies
 
-See `docs/toolchain.md` and `THIRD_PARTY_NOTICES.md`. The raw DEFLATE inflater is pinned miniz tinfl commit `77d0dce8627735138c51770d1799a1ef48f2117d` under MIT. CTest uses Python 3.11.16; the shell `python3` is 3.14.7. A Java ME sample compiler, compile-time API, and reference emulator are not selected.
+See `docs/toolchain.md`, `docs/decisions.md`, and `THIRD_PARTY_NOTICES.md`. The raw DEFLATE inflater is pinned miniz tinfl commit `77d0dce8627735138c51770d1799a1ef48f2117d` under MIT. CTest uses Python 3.11.16; the shell `python3` is 3.14.7. ECJ 3.26.0 and Sun Wireless Toolkit 2.5.2_01 are selected for the sample but are not installed or verified locally.
 
 ## Last checks
 
 PASS: `cmake -S . -B build-host -DCGJRE_HOST=ON -DCMAKE_BUILD_TYPE=Debug`; `cmake --build build-host --parallel`; `ctest --test-dir build-host --output-on-failure` (3/3: smoke, archive, classfile). PASS: `python3 tools/inspect_jar.py /tmp/cgjre-inspect.jar` on a generated compressed-manifest fixture.
 
-PASS: `fxsdk build-cg`; linked `build-cg/cgjre` and `build-cg/cgjre.map`, and generated the real add-in `CGJRE.g3a`. `sh-elf-size build-cg/cgjre`: text 39,668, data 464, BSS 1,072 bytes. The calculator build still launches only the smoke screen.
+PASS: `fxsdk build-cg`; linked `build-cg/cgjre` and `build-cg/cgjre.map`, and generated the real add-in `CGJRE.g3a`. `sh-elf-size build-cg/cgjre`: text 39,668, data 464, BSS 1,072 bytes. The calculator source still contains only the smoke screen.
 
 PASS: `cmake -S . -B /tmp/cgjre-asan -DCGJRE_HOST=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'`; build; `ASAN_OPTIONS=detect_leaks=0 ctest --test-dir /tmp/cgjre-asan --output-on-failure` (3/3). Without `detect_leaks=0`, LeakSanitizer fails in this ptrace sandbox before tests run; this is an environment limitation, not a passing leak check.
 
@@ -27,8 +29,8 @@ NOT RUN: calculator hardware execution and independent Java ME emulator.
 - Usable calculator RAM, safe heap reservation, target OS, storage location, and actual display/key/exit behavior are unmeasured.
 - M1 class parser has no full verifier; valid static structure is not executable correctness. Static references can be unreachable or unresolved.
 - The resource limit of 4 MiB is a bound, not measured available calculator memory. A device-specific lower limit may be needed.
-- No Java ME-capable old-format compiler, compile-time API, or independent emulator is pinned.
-- VM, class library, MIDP, game sample, packaging, and hardware acceptance remain pending.
+- The selected Java ME compiler, API archives, and emulator have not been installed or tested locally.
+- VM, class library, MIDP, game sample, and packaging remain pending.
 
 ## Memory and performance
 
@@ -36,7 +38,7 @@ No device measurements. One estimated physical RGB565 framebuffer is 177,408 byt
 
 ## Artifacts
 
-Cross-built, hardware-untested `CGJRE.g3a`: SHA-256 `0a196c64610ee3834a088a73ccd75b2fe147deb4778585e713f8f89f7df07996`. No game JAR or released add-in exists.
+Cross-built `CGJRE.g3a`: SHA-256 `0a196c64610ee3834a088a73ccd75b2fe147deb4778585e713f8f89f7df07996`. No game JAR or released add-in exists.
 
 ## Next smallest task
 
