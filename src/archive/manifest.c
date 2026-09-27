@@ -25,6 +25,56 @@ const char *cgjre_manifest_get(const cgjre_manifest *manifest, const char *name)
     return NULL;
 }
 
+static int copy_trimmed(char *destination, size_t capacity,
+    const char *start, size_t length, int allow_empty)
+{
+    while(length && (*start == ' ' || *start == '\t')) {
+        ++start; --length;
+    }
+    while(length && (start[length - 1] == ' ' ||
+                     start[length - 1] == '\t')) --length;
+    if(length >= capacity || (!allow_empty && length == 0)) return -1;
+    memcpy(destination, start, length);
+    destination[length] = 0;
+    return 0;
+}
+
+int cgjre_manifest_midlet(const cgjre_manifest *manifest, unsigned ordinal,
+    cgjre_midlet_decl *out)
+{
+    char key[10] = "MIDlet-";
+    const char *value, *first, *second;
+    size_t length;
+    if(!manifest || !out || ordinal == 0 || ordinal > 99) return -1;
+    if(ordinal >= 10) {
+        key[7] = (char)('0' + ordinal / 10);
+        key[8] = (char)('0' + ordinal % 10);
+        key[9] = 0;
+    }
+    else { key[7] = (char)('0' + ordinal); key[8] = 0; }
+    value = cgjre_manifest_get(manifest, key);
+    if(!value) return 1;
+    memset(out, 0, sizeof(*out));
+    first = strchr(value, ',');
+    if(!first) return -1;
+    second = strchr(first + 1, ',');
+    if(!second || strchr(second + 1, ',')) return -1;
+    length = strlen(value);
+    if(copy_trimmed(out->name, sizeof(out->name), value,
+           (size_t)(first - value), 0) ||
+       copy_trimmed(out->icon, sizeof(out->icon), first + 1,
+           (size_t)(second - first - 1), 1) ||
+       copy_trimmed(out->class_name, sizeof(out->class_name), second + 1,
+           length - (size_t)(second - value) - 1, 0)) return -1;
+    for(const char *p = out->class_name; *p; ++p)
+        if(!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+             (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' ||
+             *p == '$') ||
+           (*p == '.' && (p == out->class_name || p[1] == '.' || p[1] == 0)))
+            return -1;
+    return 0;
+}
+
 int cgjre_manifest_parse(cgjre_manifest *manifest, const uint8_t *bytes,
     size_t length)
 {

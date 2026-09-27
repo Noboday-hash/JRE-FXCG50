@@ -53,7 +53,7 @@ cgjre_zip_status cgjre_zip_name(const cgjre_zip *zip, uint16_t index,
     char name[CGJRE_ZIP_MAX_NAME + 1]);
 cgjre_zip_status cgjre_zip_find(const cgjre_zip *zip, const char *name,
     uint16_t *index);
-/* Caller owns the returned buffer. Stored entries only in this slice. */
+/* Caller owns the returned buffer. Supports stored and raw DEFLATE entries. */
 cgjre_zip_status cgjre_zip_extract(const cgjre_zip *zip, uint16_t index,
     uint8_t **bytes, size_t *length);
 

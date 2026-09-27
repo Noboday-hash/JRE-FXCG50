@@ -2,6 +2,7 @@
 
 import io
 import pathlib
+import random
 import struct
 import subprocess
 import sys
@@ -20,6 +21,17 @@ def make_zip(compression):
 def manifest_zip(contents):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("META-INF/MANIFEST.MF", contents)
+    return buffer.getvalue()
+
+
+def descriptor_zip(contents):
+    class WriteOnly(io.BytesIO):
+        def seek(self, *args):
+            raise io.UnsupportedOperation("not seekable")
+
+    buffer = WriteOnly()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("META-INF/MANIFEST.MF", contents)
     return buffer.getvalue()
 
@@ -43,11 +55,32 @@ def main(executable):
     with tempfile.TemporaryDirectory() as temporary:
         folder = pathlib.Path(temporary)
         check(executable, folder, "stored", stored, True, "Manifest bytes: 23")
-        check(executable, folder, "deflated", deflated, False,
-              "unsupported ZIP feature")
+        check(executable, folder, "deflated", deflated, True,
+              "Manifest bytes: 23")
+        rng = random.Random(1)
+        long_manifest = "".join(
+            f"X-{i}: " + "".join(rng.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=300)) + "\r\n"
+            for i in range(40)
+        ) + "\r\n"
+        descriptor = descriptor_zip(long_manifest)
+        assert len(descriptor) > 4096
+        check(executable, folder, "descriptor", descriptor, True,
+              "Manifest bytes:")
+        damaged_stream = bytearray(deflated)
+        local_name_length = struct.unpack_from("<H", damaged_stream, 26)[0]
+        local_extra_length = struct.unpack_from("<H", damaged_stream, 28)[0]
+        damaged_stream[30 + local_name_length + local_extra_length] = 0xFF
+        check(executable, folder, "bad_deflate", damaged_stream, False,
+              "malformed ZIP")
         check(executable, folder, "continuation",
               manifest_zip("MIDlet-1: TileBounce, /icon.png, game.\r\n Main\r\n\r\n"),
               True, "MIDlet-1: TileBounce, /icon.png, game.Main")
+        check(executable, folder, "midlet_selection",
+              manifest_zip("MIDlet-1: TileBounce, /icon.png, game.Main\n\n"),
+              True, "MIDlet 1 class=game.Main")
+        check(executable, folder, "bad_midlet",
+              manifest_zip("MIDlet-1: TileBounce, icon.png, ..Main\n"),
+              False, "malformed MIDlet-1")
         check(executable, folder, "bad_manifest",
               manifest_zip(" Broken continuation\n"), False,
               "malformed manifest")
@@ -62,6 +95,21 @@ def main(executable):
         struct.pack_into("<H", zip64, eocd + 10, 0xFFFF)
         check(executable, folder, "zip64", zip64, False,
               "unsupported ZIP feature")
+        zip64_extra = io.BytesIO()
+        with zipfile.ZipFile(zip64_extra, "w") as archive:
+            info = zipfile.ZipInfo("x")
+            info.extra = struct.pack("<HH", 1, 0)
+            archive.writestr(info, b"x")
+        check(executable, folder, "zip64_extra", zip64_extra.getvalue(),
+              False, "unsupported ZIP feature")
+        multi_volume = bytearray(stored)
+        struct.pack_into("<H", multi_volume, eocd + 4, 1)
+        check(executable, folder, "multi_volume", multi_volume, False,
+              "unsupported ZIP feature")
+        oversize = bytearray(stored)
+        struct.pack_into("<I", oversize, central + 24, 4 * 1024 * 1024 + 1)
+        check(executable, folder, "oversize", oversize, False,
+              "ZIP limit exceeded")
         out_of_bounds = bytearray(stored)
         struct.pack_into("<I", out_of_bounds, eocd + 16, 0xFFFFFF00)
         check(executable, folder, "offset", out_of_bounds, False,
@@ -98,7 +146,7 @@ def main(executable):
         directory = io.BytesIO()
         with zipfile.ZipFile(directory, "w") as archive:
             archive.writestr("game/", "")
-            archive.writestr("game/Main.class", b"test")
+            archive.writestr("game/data.bin", b"test")
         check(executable, folder, "directory", directory.getvalue(), True,
               "ZIP entries: 2")
     print("archive fixtures passed")

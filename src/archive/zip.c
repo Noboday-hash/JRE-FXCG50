@@ -1,4 +1,5 @@
 #include <cgjre/archive.h>
+#include <miniz_tinfl.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,6 +45,24 @@ static cgjre_zip_status read_bytes(cgjre_zip_source source, uint64_t offset,
     if(!within(offset, length, source.size)) return CGJRE_ZIP_FORMAT;
     return source.read_at(source.context, offset, destination, length) == 0 ?
         CGJRE_ZIP_OK : CGJRE_ZIP_IO;
+}
+
+static cgjre_zip_status check_extra(cgjre_zip_source source,
+    uint64_t offset, uint16_t length)
+{
+    size_t cursor = 0;
+    while(cursor < length) {
+        uint8_t field[4];
+        cgjre_zip_status status;
+        if((size_t)length - cursor < 4u) return CGJRE_ZIP_FORMAT;
+        status = read_bytes(source, offset + cursor, field, sizeof(field));
+        if(status != CGJRE_ZIP_OK) return status;
+        uint16_t body = rd16(field + 2);
+        if(body > (size_t)length - cursor - 4u) return CGJRE_ZIP_FORMAT;
+        if(rd16(field) == 1u) return CGJRE_ZIP_UNSUPPORTED;
+        cursor += 4u + body;
+    }
+    return CGJRE_ZIP_OK;
 }
 
 const char *cgjre_zip_status_name(cgjre_zip_status status)
@@ -124,6 +143,9 @@ cgjre_zip_status cgjre_zip_open(cgjre_zip *zip, cgjre_zip_source source)
         }
     }
     if(eocd < 0) { status = CGJRE_ZIP_FORMAT; goto fail; }
+    if(eocd >= 20 && rd32(tail + eocd - 20) == 0x07064b50u) {
+        status = CGJRE_ZIP_UNSUPPORTED; goto fail;
+    }
     const uint8_t *end = tail + eocd;
     if(rd16(end + 4) || rd16(end + 6) || rd16(end + 8) != rd16(end + 10)) {
         status = CGJRE_ZIP_UNSUPPORTED; goto fail;
@@ -196,6 +218,9 @@ cgjre_zip_status cgjre_zip_open(cgjre_zip *zip, cgjre_zip_source source)
             status = CGJRE_ZIP_UNSUPPORTED; goto fail;
         }
         entry->name_offset = (uint32_t)(cursor + 46u);
+        status = check_extra(source, cursor + 46u + entry->name_length,
+            extra_length);
+        if(status != CGJRE_ZIP_OK) goto fail;
         status = cgjre_zip_name(zip, i, name);
         if(status != CGJRE_ZIP_OK) goto fail;
         if(!safe_name(name, entry->name_length)) {
@@ -224,6 +249,10 @@ cgjre_zip_status cgjre_zip_open(cgjre_zip *zip, cgjre_zip_source source)
                 entry->name_length, central_start)) {
             status = CGJRE_ZIP_FORMAT; goto fail;
         }
+        status = check_extra(source,
+            (uint64_t)entry->local_offset + 30u + entry->name_length,
+            rd16(local + 28));
+        if(status != CGJRE_ZIP_OK) goto fail;
         status = read_bytes(source, (uint64_t)entry->local_offset + 30u,
             local_name, entry->name_length);
         if(status != CGJRE_ZIP_OK) goto fail;
@@ -253,6 +282,56 @@ static uint32_t crc32_bytes(const uint8_t *bytes, size_t length)
     return ~crc;
 }
 
+static cgjre_zip_status inflate_entry(const cgjre_zip *zip,
+    const cgjre_zip_entry *entry, uint64_t data_start, uint8_t *output)
+{
+    uint8_t input[4096];
+    tinfl_decompressor *inflator = malloc(sizeof(*inflator));
+    uint32_t remaining = entry->compressed_size;
+    uint64_t offset = data_start;
+    size_t available = 0, position = 0, produced = 0;
+    cgjre_zip_status result = CGJRE_ZIP_FORMAT;
+    if(!inflator) return CGJRE_ZIP_NOMEM;
+    tinfl_init(inflator);
+    for(;;) {
+        size_t consumed, written;
+        tinfl_status status;
+        unsigned flags = TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+        if(position == available && remaining) {
+            available = remaining < sizeof(input) ? remaining : sizeof(input);
+            result = read_bytes(zip->source, offset, input, available);
+            if(result != CGJRE_ZIP_OK) break;
+            offset += available;
+            remaining -= (uint32_t)available;
+            position = 0;
+        }
+        consumed = available - position;
+        written = (size_t)entry->inflated_size + 1u - produced;
+        if(remaining) flags |= TINFL_FLAG_HAS_MORE_INPUT;
+        status = tinfl_decompress(inflator, input + position, &consumed,
+            output, output + produced, &written, flags);
+        position += consumed;
+        produced += written;
+        if(produced > entry->inflated_size) {
+            result = CGJRE_ZIP_FORMAT; break;
+        }
+        if(status == TINFL_STATUS_DONE) {
+            result = produced == entry->inflated_size &&
+                remaining == 0 && position == available ?
+                CGJRE_ZIP_OK : CGJRE_ZIP_FORMAT;
+            break;
+        }
+        if(status < 0 || (status == TINFL_STATUS_NEEDS_MORE_INPUT &&
+           remaining == 0 && position == available) ||
+           (consumed == 0 && written == 0 &&
+            (status != TINFL_STATUS_NEEDS_MORE_INPUT || position < available))) {
+            result = CGJRE_ZIP_FORMAT; break;
+        }
+    }
+    free(inflator);
+    return result;
+}
+
 cgjre_zip_status cgjre_zip_extract(const cgjre_zip *zip, uint16_t index,
     uint8_t **bytes, size_t *length)
 {
@@ -266,8 +345,7 @@ cgjre_zip_status cgjre_zip_extract(const cgjre_zip *zip, uint16_t index,
     *bytes = NULL;
     *length = 0;
     entry = &zip->entries[index];
-    if(entry->method == 8) return CGJRE_ZIP_UNSUPPORTED;
-    if(entry->compressed_size != entry->inflated_size)
+    if(entry->method == 0 && entry->compressed_size != entry->inflated_size)
         return CGJRE_ZIP_FORMAT;
     status = read_bytes(zip->source, entry->local_offset, header, sizeof(header));
     if(status != CGJRE_ZIP_OK) return status;
@@ -280,7 +358,10 @@ cgjre_zip_status cgjre_zip_extract(const cgjre_zip *zip, uint16_t index,
         return CGJRE_ZIP_FORMAT;
     result = malloc((size_t)entry->inflated_size + 1u);
     if(!result) return CGJRE_ZIP_NOMEM;
-    status = read_bytes(zip->source, data_start, result, entry->inflated_size);
+    if(entry->method == 8)
+        status = inflate_entry(zip, entry, data_start, result);
+    else
+        status = read_bytes(zip->source, data_start, result, entry->inflated_size);
     if(status != CGJRE_ZIP_OK) { free(result); return status; }
     if(crc32_bytes(result, entry->inflated_size) != entry->crc32) {
         free(result);

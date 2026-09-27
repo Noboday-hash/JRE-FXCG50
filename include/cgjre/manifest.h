@@ -19,9 +19,18 @@ typedef struct {
     size_t count;
 } cgjre_manifest;
 
+typedef struct {
+    char name[129];
+    char icon[256];
+    char class_name[256];
+} cgjre_midlet_decl;
+
 /* Parses the main section. Named sections following its blank line are ignored. */
 int cgjre_manifest_parse(cgjre_manifest *manifest, const uint8_t *bytes,
     size_t length);
 const char *cgjre_manifest_get(const cgjre_manifest *manifest, const char *name);
+/* 0: found, 1: absent, -1: malformed; ordinal starts at 1. */
+int cgjre_manifest_midlet(const cgjre_manifest *manifest, unsigned ordinal,
+    cgjre_midlet_decl *out);
 
 #endif
